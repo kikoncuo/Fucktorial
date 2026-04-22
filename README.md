@@ -205,7 +205,7 @@ All in `config.py`:
 Probably. It's also against my will to click the same button 90 times a week. We all have our crosses to bear.
 
 **Will I get fired?**
-Not unless your manager is somehow a contributor to this project. In which case: hi team, I'm the manager, this is sanctioned, please stop clicking 90 buttons a week on my behalf and go do actual work.
+If your manager is me (kikoncuo), no — this is sanctioned, please stop clicking 90 buttons a week on my behalf and go do actual work. If your manager is anyone else: I have absolutely no idea, good luck out there.
 
 **Why can't I just edit the whole week in one go in Factorial's UI?**
 Excellent question. Please forward it to Factorial.
