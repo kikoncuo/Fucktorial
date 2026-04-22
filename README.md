@@ -16,6 +16,22 @@ It talks directly to Factorial's GraphQL API (no janky browser automation in the
 
 ---
 
+## 🚀 One-click run
+
+No Python, no pip, no terminal commands. Clone or download this repo, then double-click:
+
+- **macOS:** `launch-mac.command`
+  First run installs Homebrew (if missing), Python 3.12 + Tk, a local `.venv`, dependencies, and Chromium. Every subsequent run launches instantly (~1 second).
+  First time only, macOS will warn about an "unidentified developer" — right-click the file → Open → Open.
+- **Windows:** `launch-windows.bat`
+  First run installs Python 3.12 via `winget` (if missing), creates a venv, installs dependencies, installs Chromium. Subsequent runs launch instantly via `pythonw` (no console window).
+
+The first click of **Log In** inside the app uses [`pycookiecheat`](https://github.com/n8henrie/pycookiecheat) to read your Factorial cookies directly from your everyday Chrome — no bot-check, no extra login. Just be signed into https://app.factorialhr.com in Chrome first.
+
+Prefer prebuilt binaries instead of a launcher script? Grab the latest **`.dmg`** / **`.zip`** from the [Releases page](https://github.com/kikoncuo/Fucktorial/releases) — built by GitHub Actions on every tagged release.
+
+---
+
 ## How it works
 
 1. **Cookies** are grabbed from a persistent Playwright Chromium profile (`browser_data/`) that stays logged into Factorial across runs. They're saved to `factorial_cookies.json` and reused for API calls. When the API starts returning 401/403, the script silently reopens the profile, pulls fresh cookies, and retries — **no manual refresh on a schedule**. No password handling, no 2FA dance.

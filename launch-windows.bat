@@ -1,14 +1,21 @@
 @echo off
-REM Fucktorial launcher for Windows.
-REM Double-click this file to run the GUI.
-REM Auto-installs Python (via winget) and dependencies on first run.
+REM Fucktorial — one-click launcher for Windows.
+REM Double-click this file. First run installs everything; later runs just launch.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
+set "VENV=.venv"
+set "MARKER=%VENV%\.fucktorial-ready"
+
+REM -- Fast path -------------------------------------------------------------
+if exist "%MARKER%" if exist "%VENV%\Scripts\pythonw.exe" (
+    start "" "%VENV%\Scripts\pythonw.exe" gui.py
+    exit /b
+)
+
 echo.
-echo ============================================
-echo   Fucktorial launcher
-echo ============================================
+echo   Fucktorial  —  one-time setup
+echo   ============================
 echo.
 
 REM -- Locate Python (must be 3.11+) -----------------------------------------
@@ -20,42 +27,47 @@ for %%C in (py python3 python) do (
 )
 
 if not defined PY (
-    echo [!] Python not found. Installing via winget...
+    echo [+] Python not found. Installing via winget...
     where winget >nul 2>nul
     if errorlevel 1 (
         echo [x] winget is not available on this machine.
-        echo     Please install Python 3.12 manually from https://www.python.org/downloads/
+        echo     Install Python 3.12 manually from https://www.python.org/downloads/
         echo     and re-run this launcher.
         pause
         exit /b 1
     )
     winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
-    REM PATH may not refresh in this session — use py from standard install
     set "PY=py"
 )
 
 echo [+] Using: %PY%
 %PY% --version
 
-REM -- Virtual environment ---------------------------------------------------
-if not exist ".venv\Scripts\python.exe" (
+if not exist "%VENV%\Scripts\python.exe" (
     echo [+] Creating virtual environment...
-    %PY% -m venv .venv
+    %PY% -m venv %VENV% || (echo [x] venv failed. & pause & exit /b 1)
 )
 
-call ".venv\Scripts\activate.bat"
+call "%VENV%\Scripts\activate.bat"
 
-echo [+] Installing Python dependencies (first run only)...
+echo [+] Installing Python dependencies...
 python -m pip install --upgrade pip >nul
-python -m pip install -r requirements.txt >nul
+python -m pip install -r requirements.txt >nul || (echo [x] pip failed. & pause & exit /b 1)
+
+python -c "from playwright.sync_api import sync_playwright" 2>nul
+if errorlevel 1 (
+    echo [x] Playwright didn't install cleanly.
+    pause
+    exit /b 1
+)
 
 REM -- Chromium for Playwright ----------------------------------------------
-python -m playwright install --dry-run chromium 2>nul | findstr /C:"is already installed" >nul
-if errorlevel 1 (
-    echo [+] Installing Chromium for Playwright ^(~150 MB, one-time^)...
+if not exist "%LOCALAPPDATA%\ms-playwright\chromium-*" (
+    echo [+] Downloading Chromium for Playwright ^(one-time, ~150 MB^)...
     python -m playwright install chromium
 )
 
-echo [+] Starting Fucktorial...
+type nul > "%MARKER%"
+echo [+] Setup complete. Launching Fucktorial...
 start "" pythonw gui.py
 endlocal
