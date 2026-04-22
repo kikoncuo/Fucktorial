@@ -352,7 +352,13 @@ class FactorialAPI:
         if self._cookies:
             return True
 
-        logger.warning("No cookies available — need to refresh from browser")
+        logger.warning("No cookies available — trying to read them from Chrome")
+
+        # Primary: read from user's real Chrome (no browser launch, no Cloudflare)
+        if self.load_cookies_from_chrome("chrome"):
+            return True
+
+        logger.warning("Chrome cookie read failed — falling back to Playwright browser")
         notify_login_needed()
 
         for attempt in range(1, max_retries + 1):
@@ -363,17 +369,16 @@ class FactorialAPI:
             if attempt < max_retries:
                 logger.warning(
                     "Cookie refresh failed — retrying in %ds. "
-                    "Make sure you're logged into Factorial in the browser.",
+                    "Make sure you're logged into Factorial in your browser.",
                     retry_interval,
                 )
-                # Play alert every other attempt
                 if attempt % 2 == 1:
                     notify_login_needed()
                 time_module.sleep(retry_interval)
 
         logger.error(
             "Could not get cookies after %d attempts. "
-            "Please log into Factorial in your browser and run: python main.py --refresh",
+            "Log into https://app.factorialhr.com in Chrome, then run: python main.py --refresh",
             max_retries,
         )
         return False
@@ -480,14 +485,90 @@ class FactorialAPI:
     def _today_iso(self) -> str:
         return datetime.now(TZ).date().isoformat()
 
+    @staticmethod
+    def _chrome_profile_dirs(browser: str = "chrome") -> list[Path]:
+        """Return candidate Chrome profile directories (Default + Profile N) for the OS."""
+        import sys
+        home = Path.home()
+        roots: list[Path] = []
+        name = browser.lower()
+        if sys.platform == "darwin":
+            mac_map = {
+                "chrome":   "Google/Chrome",
+                "chromium": "Chromium",
+                "brave":    "BraveSoftware/Brave-Browser",
+                "edge":     "Microsoft Edge",
+            }
+            sub = mac_map.get(name, "Google/Chrome")
+            roots.append(home / "Library" / "Application Support" / sub)
+        elif sys.platform == "win32":
+            import os
+            local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+            win_map = {
+                "chrome":   "Google/Chrome/User Data",
+                "chromium": "Chromium/User Data",
+                "brave":    "BraveSoftware/Brave-Browser/User Data",
+                "edge":     "Microsoft/Edge/User Data",
+            }
+            roots.append(local / win_map.get(name, "Google/Chrome/User Data"))
+        else:  # linux
+            config = home / ".config"
+            lin_map = {
+                "chrome":   "google-chrome",
+                "chromium": "chromium",
+                "brave":    "BraveSoftware/Brave-Browser",
+            }
+            roots.append(config / lin_map.get(name, "google-chrome"))
+
+        profiles: list[Path] = []
+        for root in roots:
+            if not root.exists():
+                continue
+            for child in sorted(root.iterdir()):
+                if not child.is_dir():
+                    continue
+                cookie_db = child / "Cookies"
+                if not cookie_db.exists():
+                    # Chrome 96+ moved cookies into Network/Cookies
+                    cookie_db = child / "Network" / "Cookies"
+                if cookie_db.exists() and (child.name == "Default" or child.name.startswith("Profile")):
+                    profiles.append(cookie_db)
+        return profiles
+
+    @staticmethod
+    def _profile_has_factorial(cookie_db: Path) -> bool:
+        """Quick sqlite check: does this Cookies DB contain factorial.com entries?"""
+        import sqlite3
+        import shutil
+        import tempfile
+        # Chrome holds a lock on the live DB; copy to a temp file to read it
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            shutil.copy2(cookie_db, tmp_path)
+            conn = sqlite3.connect(f"file:{tmp_path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM cookies WHERE host_key LIKE '%factorialhr%' LIMIT 1"
+                ).fetchone()
+                return row is not None
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug("Could not inspect %s: %s", cookie_db, e)
+            return False
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
     def load_cookies_from_chrome(self, browser: str = "chrome") -> bool:
         """Pull Factorial cookies directly from the user's real Chrome browser.
 
-        Uses pycookiecheat to read & decrypt Chrome's cookie store (Keychain on
-        macOS, DPAPI on Windows). No Cloudflare challenge because no page load.
-
-        Args:
-            browser: 'chrome', 'chromium', 'brave', 'edge', 'opera', 'slack', 'arc'
+        Auto-detects which Chrome profile (Default / Profile 1 / Profile 2 / …)
+        contains Factorial cookies, then uses pycookiecheat to decrypt them via
+        OS keychain (macOS) or DPAPI (Windows). No page load → no Cloudflare.
 
         Returns True if cookies were extracted and validated via test_cookies().
         """
@@ -505,21 +586,40 @@ class FactorialAPI:
         }
         bt = browser_map.get(browser.lower(), BrowserType.CHROME)
 
+        profiles = self._chrome_profile_dirs(browser)
+        if not profiles:
+            logger.warning("No %s profiles found on disk", browser)
+            return False
+
+        # Find the profile(s) that actually have factorial cookies
+        factorial_profiles = [p for p in profiles if self._profile_has_factorial(p)]
+        if not factorial_profiles:
+            logger.warning(
+                "%s is installed but no profile is logged into Factorial. "
+                "Open https://app.factorialhr.com in %s, sign in, then try again.",
+                browser.capitalize(), browser.capitalize(),
+            )
+            return False
+
+        logger.info("Found Factorial cookies in %d %s profile(s): %s",
+                    len(factorial_profiles), browser,
+                    ", ".join(p.parent.name for p in factorial_profiles))
+
         extracted: dict[str, str] = {}
-        # Factorial sets cookies under both api.factorialhr.com and app.factorialhr.com
-        for url in ("https://app.factorialhr.com",
-                    "https://api.factorialhr.com"):
-            try:
-                cookies = chrome_cookies(url, browser=bt)
-            except Exception as e:
-                logger.warning("Failed to read %s cookies from %s: %s", browser, url, e)
-                continue
-            if cookies:
-                extracted.update(cookies)
+        for cookie_db in factorial_profiles:
+            for url in ("https://app.factorialhr.com",
+                        "https://api.factorialhr.com"):
+                try:
+                    cookies = chrome_cookies(url, browser=bt, cookie_file=str(cookie_db))
+                except Exception as e:
+                    logger.warning("Failed to read %s from %s: %s",
+                                   url, cookie_db.parent.name, e)
+                    continue
+                if cookies:
+                    extracted.update(cookies)
 
         if not extracted:
-            logger.warning("No Factorial cookies found in %s — "
-                           "are you logged in at https://app.factorialhr.com?", browser)
+            logger.warning("Factorial profile found but decryption returned no cookies.")
             return False
 
         # Stash previous cookies so we can roll back if invalid
@@ -527,9 +627,9 @@ class FactorialAPI:
         self._cookies = extracted
 
         if not self.test_cookies():
-            logger.warning("Cookies extracted from %s but they don't validate — "
-                           "log in at https://app.factorialhr.com in %s and try again",
-                           browser, browser)
+            logger.warning(
+                "Cookies extracted but they don't validate. "
+                "Log into https://app.factorialhr.com in Chrome and try again.")
             self._cookies = previous
             return False
 

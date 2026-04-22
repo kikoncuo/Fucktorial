@@ -270,17 +270,19 @@ class FucktorialApp:
             self._apply_login_status(True)
             self.login_btn.configure(state="normal")
             return
-        # Chrome extraction failed — offer the browser fallback
+        # Chrome extraction failed — prompt user to log in
         self.login_status_var.set("Not logged in")
         self._draw_dot("#c03030")
         self.login_btn.configure(state="normal")
         choice = messagebox.askyesno(
-            "Fucktorial",
-            "Couldn't read valid Factorial cookies from your Chrome.\n\n"
-            "Make sure you're logged into Factorial at https://app.factorialhr.com "
-            "in your regular Chrome browser.\n\n"
-            "Try that now and click Yes to retry.\n"
-            "Or click No to open a separate login browser instead.",
+            "Log into Chrome first",
+            "Fucktorial couldn't find valid Factorial cookies in your Chrome.\n\n"
+            "To fix this:\n"
+            "  1. Open Chrome\n"
+            "  2. Go to https://app.factorialhr.com\n"
+            "  3. Sign in as you normally would\n\n"
+            "Once you're signed in there, click Yes to retry.\n\n"
+            "(Advanced: click No to use a standalone Playwright browser instead.)",
         )
         if choice:
             self.on_login_click()

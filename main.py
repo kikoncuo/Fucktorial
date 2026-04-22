@@ -133,11 +133,11 @@ def main() -> None:
     )
     mode.add_argument(
         "--refresh", action="store_true",
-        help="Refresh cookies from Playwright browser, then exit",
+        help="Refresh cookies from your real Chrome (no browser launch), then exit",
     )
     mode.add_argument(
-        "--from-chrome", action="store_true",
-        help="Load cookies directly from your real Chrome (no browser launch), then exit",
+        "--refresh-browser", action="store_true",
+        help="Fallback: refresh cookies from a Playwright Chromium window, then exit",
     )
     parser.add_argument(
         "--schedule-mode",
@@ -155,8 +155,8 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("Factorial HR Clock-in Automation starting (API mode)")
     mode_str = (
-        "refresh" if args.refresh
-        else "from-chrome" if args.from_chrome
+        "refresh (chrome)" if args.refresh
+        else "refresh (browser)" if args.refresh_browser
         else f"backfill {args.backfill}d" if args.backfill is not None
         else "now" if args.now
         else "force " + args.force if args.force
@@ -181,22 +181,23 @@ def main() -> None:
 
     try:
         if args.refresh:
-            # Just refresh cookies and exit
-            logger.info("Refreshing cookies from browser...")
+            logger.info("Loading cookies from your Chrome browser...")
+            if api.load_cookies_from_chrome("chrome"):
+                logger.info("Cookies loaded and validated from Chrome!")
+            else:
+                logger.error(
+                    "Failed to load valid cookies from Chrome. "
+                    "Open https://app.factorialhr.com in Chrome, sign in, and retry. "
+                    "Or use --refresh-browser to open a Playwright login window.")
+                sys.exit(1)
+            return
+
+        if args.refresh_browser:
+            logger.info("Refreshing cookies from Playwright browser...")
             if api.refresh_cookies_from_browser():
                 logger.info("Cookies refreshed successfully!")
             else:
                 logger.error("Failed to refresh cookies")
-                sys.exit(1)
-            return
-
-        if args.from_chrome:
-            logger.info("Loading cookies directly from your Chrome browser...")
-            if api.load_cookies_from_chrome("chrome"):
-                logger.info("Cookies loaded and validated from Chrome!")
-            else:
-                logger.error("Failed to load valid cookies from Chrome. "
-                             "Make sure you're logged into Factorial in Chrome.")
                 sys.exit(1)
             return
 
