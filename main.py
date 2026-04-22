@@ -16,10 +16,16 @@ Usage:
 """
 
 import argparse
-import fcntl
 import logging
 import sys
 import subprocess
+
+try:
+    import fcntl  # POSIX
+    _HAS_FCNTL = True
+except ImportError:
+    import msvcrt  # Windows
+    _HAS_FCNTL = False
 
 from config import (
     LOCK_FILE,
@@ -92,7 +98,10 @@ def acquire_lock() -> object:
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(LOCK_FILE, "w")
     try:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if _HAS_FCNTL:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
         logger.info("Lock acquired: %s", LOCK_FILE)
         return lock_file
     except (IOError, OSError):

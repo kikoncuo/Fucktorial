@@ -480,6 +480,121 @@ class FactorialAPI:
     def _today_iso(self) -> str:
         return datetime.now(TZ).date().isoformat()
 
+    def open_login_browser(self):
+        """Open a headed Chromium against the persistent profile and return (pw, context).
+
+        The GUI keeps the handles alive while the user logs in, then calls
+        capture_cookies_from_login(pw, context) to extract cookies and close.
+        """
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            logger.error("Playwright not installed — cannot open login browser")
+            return None, None
+
+        from config import BROWSER_DATA_DIR
+        BROWSER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+        pw = sync_playwright().start()
+        context = pw.chromium.launch_persistent_context(
+            user_data_dir=str(BROWSER_DATA_DIR),
+            headless=False,
+            locale="es-ES",
+            viewport={"width": 1280, "height": 800},
+            timezone_id="Europe/Madrid",
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+        page.goto(FACTORIAL_APP_URL, wait_until="domcontentloaded")
+        return pw, context
+
+    def capture_cookies_from_login(self, pw, context) -> bool:
+        """Pull cookies from a browser session opened by open_login_browser, then close it."""
+        if pw is None or context is None:
+            return False
+        try:
+            all_cookies = context.cookies()
+            self._cookies = {}
+            for cookie in all_cookies:
+                if "factorialhr" in cookie.get("domain", ""):
+                    self._cookies[cookie["name"]] = cookie["value"]
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                doc_cookies = page.evaluate("() => document.cookie")
+                if doc_cookies:
+                    for pair in doc_cookies.split(";"):
+                        pair = pair.strip()
+                        if "=" in pair:
+                            name, value = pair.split("=", 1)
+                            self._cookies[name.strip()] = value.strip()
+            except Exception:
+                pass
+            if not self._cookies:
+                logger.error("No cookies found in login browser")
+                return False
+            self._save_cookies()
+            logger.info("Captured %d cookies from interactive login", len(self._cookies))
+            return True
+        except Exception as e:
+            logger.error("capture_cookies_from_login failed: %s", e)
+            return False
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
+            except Exception:
+                pass
+
+    def has_cookies(self) -> bool:
+        """True if cookies are loaded in memory (does not validate them)."""
+        return bool(self._cookies)
+
+    def test_cookies(self) -> bool:
+        """Ping the API with current cookies to verify they are still valid.
+
+        Does NOT trigger a browser refresh on failure — purely a status check.
+        Returns True if a minimal GraphQL query returns 200 with non-empty data.
+        """
+        if not self._cookies:
+            return False
+        from urllib.parse import unquote
+        try:
+            data_str = unquote(self._cookies.get("_factorial_data", "{}"))
+            access_id = str(json.loads(data_str).get("access_id", "")) if data_str else ""
+        except Exception:
+            access_id = ""
+        if not access_id:
+            return False
+
+        headers = {
+            **REQUIRED_HEADERS,
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        }
+        payload = {
+            "operationName": "GetEmployeeByAccess",
+            "variables": {"accessIds": [access_id]},
+            "query": self.EMPLOYEE_ID_QUERY,
+        }
+        try:
+            resp = self._session.post(
+                GRAPHQL_URL,
+                params=[("operationName", "GetEmployeeByAccess")],
+                json=payload,
+                headers=headers,
+                cookies=self._cookies,
+                timeout=API_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                return False
+            body = resp.json()
+            nodes = body.get("data", {}).get("employees", {}).get("employeesConnection", {}).get("nodes", [])
+            return bool(nodes)
+        except Exception as e:
+            logger.debug("test_cookies failed: %s", e)
+            return False
+
     def clock_in(self) -> bool:
         """Clock in (Fichar)."""
         logger.info("API: clock_in")

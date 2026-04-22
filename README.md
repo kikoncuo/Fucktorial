@@ -10,6 +10,8 @@ God forbid you go grab lunch, or actually finish work, or — heaven help you �
 
 **Fucktorial clicks the buttons so you don't have to.**
 
+It ships as both a **desktop app** (macOS `.app` / Windows `.exe`) for people who'd rather not touch a terminal, and a **Python CLI** for people who would.
+
 It talks directly to Factorial's GraphQL API (no janky browser automation in the hot path), runs as a quiet little daemon in the background, and does the needful at the scheduled times. It can also **backfill** the past N days when you forgot it existed / were on holiday / your laptop died / you simply refused to participate.
 
 ---
@@ -25,7 +27,27 @@ It talks directly to Factorial's GraphQL API (no janky browser automation in the
 
 ---
 
-## Install
+## Install — Desktop app (recommended for non-tech users)
+
+Grab the latest build from the [Releases page](https://github.com/kikoncuo/Fucktorial/releases):
+
+- **macOS:** `Fucktorial-macOS.dmg` → open, drag `Fucktorial.app` to `Applications`, launch it. First launch: right-click → Open to bypass Gatekeeper (the app isn't notarised).
+- **Windows:** `Fucktorial-Windows.zip` → unzip anywhere, run `Fucktorial.exe`. SmartScreen may complain ("unknown publisher") — click "More info" → "Run anyway".
+
+The first time you click **Log In**, the app will download a Chromium browser (~150 MB) into its local profile. After that it's all local.
+
+### Using the desktop app
+
+1. Click **Log In** → a browser window opens at Factorial. Sign in normally. Click **Log in done**.
+2. Pick your schedule: *Friday short* or *Standard*.
+3. Hit **Start** to run the daemon. Leave it running in the background.
+4. Use the **Manual actions** buttons to fire off a Fichar / Pausar / Reanudar / Salida on demand.
+5. Use **Backfill** to fill in missing days (holidays, sick days, "oops I forgot" days).
+6. The **Log** panel shows what it's doing. The **Today** panel shows today's plan and what's been done.
+
+---
+
+## Install — CLI (Python)
 
 Requires **Python 3.11+** and **macOS** (for the system sounds — the rest is cross-platform-ish).
 
@@ -44,7 +66,17 @@ The script will `pip install` these itself on first run if they're missing, but 
 
 ---
 
-## One-time setup
+### Running the GUI from source
+
+```bash
+python gui.py
+```
+
+Same features as the packaged app, no download required.
+
+---
+
+## One-time setup (CLI)
 
 1. Run the first-time login:
 
@@ -145,6 +177,18 @@ Excellent question. Please forward it to Factorial.
 
 **Why the name?**
 It wrote itself.
+
+---
+
+## Building the desktop app yourself
+
+```bash
+pip install pyinstaller==6.10.0
+python -m playwright install chromium
+pyinstaller --noconfirm --clean fucktorial.spec
+```
+
+Output lands in `dist/` — `Fucktorial.app` on macOS, `Fucktorial/Fucktorial.exe` on Windows. The `.github/workflows/build.yml` workflow does this in CI and attaches the artefacts to a GitHub Release on every `v*` tag.
 
 ---
 
