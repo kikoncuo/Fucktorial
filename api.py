@@ -754,51 +754,63 @@ class FactorialAPI:
             logger.debug("test_cookies failed: %s", e)
             return False
 
-    def clock_in(self) -> bool:
-        """Clock in (Fichar)."""
-        logger.info("API: clock_in")
+    def _when_iso(self, when: Optional[datetime]) -> tuple[str, str]:
+        """Return (timestamp_iso, date_iso). If when is None, use now."""
+        if when is None:
+            return self._now_iso(), self._today_iso()
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=TZ)
+        return when.isoformat(), when.date().isoformat()
+
+    def clock_in(self, when: Optional[datetime] = None) -> bool:
+        """Clock in (Fichar). If `when` given, backdates to that moment."""
+        ts, day = self._when_iso(when)
+        logger.info("API: clock_in at %s", ts)
         result = self._graphql_request("ClockIn", CLOCK_IN_MUTATION, {
-            "now": self._now_iso(),
-            "date": self._today_iso(),
+            "now": ts,
+            "date": day,
             "source": "desktop",
         })
         return result is not None
 
-    def clock_out(self) -> bool:
-        """Clock out (Salida)."""
-        logger.info("API: clock_out")
+    def clock_out(self, when: Optional[datetime] = None) -> bool:
+        """Clock out (Salida). If `when` given, backdates to that moment."""
+        ts, day = self._when_iso(when)
+        logger.info("API: clock_out at %s", ts)
         result = self._graphql_request("ClockOut", CLOCK_OUT_MUTATION, {
-            "now": self._now_iso(),
-            "date": self._today_iso(),
+            "now": ts,
+            "date": day,
             "source": "desktop",
-            "endOn": self._today_iso(),
-            "startOn": self._today_iso(),
+            "endOn": day,
+            "startOn": day,
         })
         return result is not None
 
-    def break_start(self) -> bool:
-        """Start break (Pausar)."""
-        logger.info("API: break_start")
+    def break_start(self, when: Optional[datetime] = None) -> bool:
+        """Start break (Pausar). If `when` given, backdates to that moment."""
+        ts, day = self._when_iso(when)
+        logger.info("API: break_start at %s", ts)
         result = self._graphql_request("BreakStart", BREAK_START_MUTATION, {
-            "now": self._now_iso(),
-            "date": self._today_iso(),
+            "now": ts,
+            "date": day,
             "source": "desktop",
             "timeSettingsBreakConfigurationId": BREAK_CONFIGURATION_ID,
-            "endOn": self._today_iso(),
-            "startOn": self._today_iso(),
+            "endOn": day,
+            "startOn": day,
         })
         return result is not None
 
-    def break_end(self) -> bool:
-        """End break (Reanudar)."""
-        logger.info("API: break_end")
+    def break_end(self, when: Optional[datetime] = None) -> bool:
+        """End break (Reanudar). If `when` given, backdates to that moment."""
+        ts, day = self._when_iso(when)
+        logger.info("API: break_end at %s", ts)
         result = self._graphql_request("BreakEnd", BREAK_END_MUTATION, {
-            "now": self._now_iso(),
-            "date": self._today_iso(),
+            "now": ts,
+            "date": day,
             "source": "desktop",
             "systemCreated": False,
-            "endOn": self._today_iso(),
-            "startOn": self._today_iso(),
+            "endOn": day,
+            "startOn": day,
         })
         return result is not None
 
@@ -831,8 +843,8 @@ class FactorialAPI:
 
     # ── High-level action dispatcher ───────────────────────────────────
 
-    def perform_action(self, action: str, max_retries: int = 2) -> bool:
-        """Execute a clock-in action via API with retry."""
+    def perform_action(self, action: str, max_retries: int = 2, when: Optional[datetime] = None) -> bool:
+        """Execute a clock-in action via API with retry. `when` backdates if given."""
         action_map = {
             "fichar":   self.clock_in,
             "pausar":   self.break_start,
@@ -847,7 +859,7 @@ class FactorialAPI:
         fn = action_map[action]
         for attempt in range(1, max_retries + 1):
             try:
-                success = fn()
+                success = fn(when=when)
                 if success:
                     logger.info("Action '%s' succeeded (attempt %d)", action, attempt)
                     return True
@@ -862,10 +874,12 @@ class FactorialAPI:
         notify_action_failed()
         return False
 
-    def execute_smart_action(self, action: str) -> bool:
-        """Perform action with state-aware validation."""
+    def execute_smart_action(self, action: str, when: Optional[datetime] = None) -> bool:
+        """Perform action with state-aware validation. `when` backdates if given."""
         current_state = self.get_current_state()
-        logger.info("Current state: %s, requested action: %s", current_state, action)
+        logger.info("Current state: %s, requested action: %s%s",
+                    current_state, action,
+                    f" (backdated to {when.strftime('%H:%M')})" if when else "")
 
         if current_state is None:
             logger.warning("Cannot determine state — attempting action anyway")
@@ -886,7 +900,7 @@ class FactorialAPI:
             logger.warning("Cannot clock out — not clocked in!")
             return False
 
-        return self.perform_action(action)
+        return self.perform_action(action, when=when)
 
     # ── Backfill (past shifts) ─────────────────────────────────────────
 

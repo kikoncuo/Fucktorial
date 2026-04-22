@@ -144,7 +144,7 @@ class FucktorialApp:
         ctrl = ttk.Frame(self.root)
         ctrl.pack(fill="x", **pad)
 
-        daemon_box = ttk.LabelFrame(ctrl, text="Daemon", style="Section.TLabelframe")
+        daemon_box = ttk.LabelFrame(ctrl, text="Automatic", style="Section.TLabelframe")
         daemon_box.pack(side="left", fill="y", padx=(0, 8))
         self.daemon_btn = ttk.Button(daemon_box, text="Start", command=self.on_toggle_daemon)
         self.daemon_btn.pack(padx=8, pady=4)
@@ -421,13 +421,45 @@ class FucktorialApp:
         self.daemon_btn.configure(text="Start", state="normal")
 
     # ── Manual actions ───────────────────────────────────────────────
+    def _scheduled_time_for(self, action: str):
+        """Return today's scheduled datetime for `action`, or None if not scheduled."""
+        for a, sched_dt in compute_today_actions():
+            if a == action:
+                return sched_dt
+        return None
+
     def on_manual_action(self, action: str) -> None:
-        if not messagebox.askyesno("Fucktorial", f"Run '{action}' now?"):
-            return
+        now = datetime.now().astimezone()
+        sched = self._scheduled_time_for(action)
+        when = None  # None = use now
+
+        if sched is not None and sched < now:
+            # Ensure tz-aware comparison
+            try:
+                late_minutes = int((now - sched).total_seconds() // 60)
+            except Exception:
+                late_minutes = 0
+            if late_minutes >= 1:
+                result = messagebox.askyesnocancel(
+                    "Record at scheduled time?",
+                    f"The scheduled time for '{self.ACTION_LABELS.get(action, action)}' "
+                    f"was {sched.strftime('%H:%M')} ({late_minutes} min ago).\n\n"
+                    "Yes — record it at the scheduled time (recommended).\n"
+                    "No — record it right now instead.\n"
+                    "Cancel — don't do anything.",
+                )
+                if result is None:
+                    return
+                when = sched if result else None
+        else:
+            if not messagebox.askyesno(
+                "Fucktorial",
+                f"Run '{self.ACTION_LABELS.get(action, action)}' now?"):
+                return
 
         def _run():
             try:
-                ok = self.api.execute_smart_action(action)
+                ok = self.api.execute_smart_action(action, when=when)
                 if ok:
                     today = datetime.now().date().isoformat()
                     state = init_today(load_state())
