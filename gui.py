@@ -99,7 +99,8 @@ class FucktorialApp:
 
         self._build_ui()
         self._pump_log()
-        self._pump_plan()
+        # Plan refreshes on-demand only (Refresh button, login, daemon start,
+        # after actions/backfill). No periodic network polling.
         self.check_login_status_async()
 
     # ── UI ───────────────────────────────────────────────────────────
@@ -131,6 +132,13 @@ class FucktorialApp:
         # Today's plan
         plan_frame = ttk.LabelFrame(self.root, text="Today", style="Section.TLabelframe")
         plan_frame.pack(fill="x", **pad)
+        plan_header = ttk.Frame(plan_frame)
+        plan_header.pack(fill="x", padx=8, pady=(4, 0))
+        self.plan_status_var = tk.StringVar(value="")
+        ttk.Label(plan_header, textvariable=self.plan_status_var,
+                  foreground="#888").pack(side="left")
+        ttk.Button(plan_header, text="Refresh",
+                   command=self._refresh_plan).pack(side="right")
         self.plan_tree = ttk.Treeview(plan_frame, columns=("time", "status"), show="tree headings", height=4)
         self.plan_tree.heading("#0", text="Slot")
         self.plan_tree.heading("time", text="Window")
@@ -192,24 +200,39 @@ class FucktorialApp:
             root.addHandler(handler)
         root.setLevel(logging.INFO)
 
+    _ACTION_SUCCESS_MARK = "Action '"  # part of scheduler log "Action 'X' succeeded"
+
     def _pump_log(self) -> None:
+        saw_action_success = False
         try:
             while True:
                 line = self.log_queue.get_nowait()
                 self.log_text.configure(state="normal")
                 self.log_text.insert("end", line + "\n")
                 self.log_text.see("end")
-                # Cap buffer at ~5000 lines
                 if int(self.log_text.index("end-1c").split(".")[0]) > 5000:
                     self.log_text.delete("1.0", "1000.0")
                 self.log_text.configure(state="disabled")
+                if self._ACTION_SUCCESS_MARK in line and "succeeded" in line:
+                    saw_action_success = True
         except queue.Empty:
             pass
-        self.root.after(200, self._pump_log)
+        if saw_action_success:
+            # Factorial needs a moment to register the shift before we re-fetch.
+            self._schedule_plan_refresh(delay_ms=5000)
+        self.root.after(300, self._pump_log)
 
-    def _pump_plan(self) -> None:
-        self._refresh_plan()
-        self.root.after(5000, self._pump_plan)
+    def _schedule_plan_refresh(self, delay_ms: int = 0) -> None:
+        """Schedule exactly one plan refresh after delay_ms (debounced)."""
+        if getattr(self, "_plan_refresh_pending", False):
+            return
+        self._plan_refresh_pending = True
+
+        def _fire():
+            self._plan_refresh_pending = False
+            self._refresh_plan()
+
+        self.root.after(delay_ms, _fire)
 
     # ── Plan view (live from Factorial API) ──────────────────────────
     def _refresh_plan(self) -> None:
@@ -239,7 +262,9 @@ class FucktorialApp:
     def _apply_plan(self, slots) -> None:
         self._plan_fetch_inflight = False
         if slots is None:
+            self.plan_tree.delete(*self.plan_tree.get_children())
             self.plan_tree.insert("", "end", text="(couldn't load plan)", values=("—", "—"))
+            self.plan_status_var.set("Load failed")
             return
         self.plan_tree.delete(*self.plan_tree.get_children())
         icon = {"filled": "✓ filled", "missed": "✗ missed", "pending": "· pending"}
@@ -250,6 +275,7 @@ class FucktorialApp:
                 text=label,
                 values=(f'{s["clock_in"]}–{s["clock_out"]}', icon.get(s["status"], s["status"])),
             )
+        self.plan_status_var.set(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
     # ── Login flow ───────────────────────────────────────────────────
     def check_login_status_async(self) -> None:
@@ -268,6 +294,7 @@ class FucktorialApp:
             self.login_status_var.set("Logged in")
             self._draw_dot("#2e9e44")
             self.login_btn.configure(text="Re-login")
+            self._schedule_plan_refresh()
         else:
             self.login_status_var.set("Not logged in — click Log In")
             self._draw_dot("#c03030")
@@ -464,6 +491,7 @@ class FucktorialApp:
 
     def _actually_start_daemon(self) -> None:
         scheduler_mod._running = True
+        self._schedule_plan_refresh()
 
         def _run():
             try:
@@ -487,6 +515,7 @@ class FucktorialApp:
     def _on_daemon_stopped(self) -> None:
         self.daemon_status_var.set("Stopped")
         self.daemon_btn.configure(text="Start", state="normal")
+        self._schedule_plan_refresh()
 
     # ── Manual actions ───────────────────────────────────────────────
     def _scheduled_time_for(self, action: str):
@@ -544,7 +573,7 @@ class FucktorialApp:
                         notify_action_completed()
             except Exception:
                 logging.getLogger("gui").exception("Manual action failed")
-            self.root.after(0, self._refresh_plan)
+            self.root.after(0, self._schedule_plan_refresh)
 
         threading.Thread(target=_run, daemon=True).start()
 
