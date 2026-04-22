@@ -10,6 +10,8 @@ God forbid you go grab lunch, or actually finish work, or â€” heaven help you â€
 
 **Fucktorial clicks the buttons so you don't have to.**
 
+![Fucktorial desktop app](screenshot.png)
+
 It ships as both a **desktop app** (macOS `.app` / Windows `.exe`) for people who'd rather not touch a terminal, and a **Python CLI** for people who would.
 
 It talks directly to Factorial's GraphQL API (no janky browser automation in the hot path), runs as a quiet little daemon in the background, and does the needful at the scheduled times. It can also **backfill** the past N days when you forgot it existed / were on holiday / your laptop died / you simply refused to participate.
