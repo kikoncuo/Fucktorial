@@ -1,0 +1,9 @@
+browser_data/
+clock_state.json
+factorial_cookies.json
+factorial.log
+factorial.lock
+local_holidays.json
+debug_screenshot_*.png
+__pycache__/
+*.pyc
