@@ -11,6 +11,7 @@ import logging
 import queue
 import sys
 import threading
+from typing import Optional
 from datetime import datetime
 from pathlib import Path
 
@@ -42,15 +43,29 @@ from holidays import is_workday
 # ══════════════════════════════════════════════════════════════════════════
 
 class QueueLogHandler(logging.Handler):
+    """Pushes log records into a queue and wakes the Tk main loop via
+    event_generate — no periodic polling needed."""
+
     def __init__(self, q: "queue.Queue[str]") -> None:
         super().__init__()
         self.q = q
+        self.root: Optional[tk.Misc] = None
+        self.event_name = "<<FucktorialLog>>"
+
+    def attach_root(self, root: tk.Misc) -> None:
+        self.root = root
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             self.q.put_nowait(self.format(record))
         except queue.Full:
-            pass
+            return
+        if self.root is not None:
+            try:
+                self.root.event_generate(self.event_name, when="tail")
+            except (tk.TclError, RuntimeError):
+                # Tk is shutting down; safe to drop.
+                pass
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -98,7 +113,7 @@ class FucktorialApp:
         self._login_context = None
 
         self._build_ui()
-        self._pump_log()
+        self._install_log_pump()
         # Plan refreshes on-demand only (Refresh button, login, daemon start,
         # after actions/backfill). No periodic network polling.
         self.check_login_status_async()
@@ -191,18 +206,27 @@ class FucktorialApp:
 
     # ── Logging pump ─────────────────────────────────────────────────
     def _install_log_handler(self) -> None:
-        handler = QueueLogHandler(self.log_queue)
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-                                               datefmt="%H:%M:%S"))
-        handler.setLevel(logging.INFO)
+        self.log_handler = QueueLogHandler(self.log_queue)
+        self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                                                        datefmt="%H:%M:%S"))
+        self.log_handler.setLevel(logging.INFO)
         root = logging.getLogger()
-        if not any(isinstance(h, QueueLogHandler) for h in root.handlers):
-            root.addHandler(handler)
+        # Remove any stale QueueLogHandler from a previous GUI instance
+        for h in [h for h in root.handlers if isinstance(h, QueueLogHandler)]:
+            root.removeHandler(h)
+        root.addHandler(self.log_handler)
         root.setLevel(logging.INFO)
 
     _ACTION_SUCCESS_MARK = "Action '"  # part of scheduler log "Action 'X' succeeded"
 
-    def _pump_log(self) -> None:
+    def _install_log_pump(self) -> None:
+        """Bind the virtual event that the log handler fires, then drain."""
+        self.log_handler.attach_root(self.root)
+        self.root.bind(self.log_handler.event_name, self._drain_log_queue, add="+")
+        # One initial drain in case records queued before binding completed.
+        self._drain_log_queue(None)
+
+    def _drain_log_queue(self, _event) -> None:
         saw_action_success = False
         try:
             while True:
@@ -218,9 +242,7 @@ class FucktorialApp:
         except queue.Empty:
             pass
         if saw_action_success:
-            # Factorial needs a moment to register the shift before we re-fetch.
             self._schedule_plan_refresh(delay_ms=5000)
-        self.root.after(300, self._pump_log)
 
     def _schedule_plan_refresh(self, delay_ms: int = 0) -> None:
         """Schedule exactly one plan refresh after delay_ms (debounced)."""
