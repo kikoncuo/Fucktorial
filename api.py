@@ -754,63 +754,51 @@ class FactorialAPI:
             logger.debug("test_cookies failed: %s", e)
             return False
 
-    def _when_iso(self, when: Optional[datetime]) -> tuple[str, str]:
-        """Return (timestamp_iso, date_iso). If when is None, use now."""
-        if when is None:
-            return self._now_iso(), self._today_iso()
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=TZ)
-        return when.isoformat(), when.date().isoformat()
-
-    def clock_in(self, when: Optional[datetime] = None) -> bool:
-        """Clock in (Fichar). If `when` given, backdates to that moment."""
-        ts, day = self._when_iso(when)
-        logger.info("API: clock_in at %s", ts)
+    def clock_in(self) -> bool:
+        """Clock in (Fichar). Live: Factorial stamps it at server time."""
+        logger.info("API: clock_in")
         result = self._graphql_request("ClockIn", CLOCK_IN_MUTATION, {
-            "now": ts,
-            "date": day,
+            "now": self._now_iso(),
+            "date": self._today_iso(),
             "source": "desktop",
         })
         return result is not None
 
-    def clock_out(self, when: Optional[datetime] = None) -> bool:
-        """Clock out (Salida). If `when` given, backdates to that moment."""
-        ts, day = self._when_iso(when)
-        logger.info("API: clock_out at %s", ts)
+    def clock_out(self) -> bool:
+        """Clock out (Salida). Live: Factorial stamps it at server time."""
+        logger.info("API: clock_out")
         result = self._graphql_request("ClockOut", CLOCK_OUT_MUTATION, {
-            "now": ts,
-            "date": day,
+            "now": self._now_iso(),
+            "date": self._today_iso(),
             "source": "desktop",
-            "endOn": day,
-            "startOn": day,
+            "endOn": self._today_iso(),
+            "startOn": self._today_iso(),
         })
         return result is not None
 
-    def break_start(self, when: Optional[datetime] = None) -> bool:
-        """Start break (Pausar). If `when` given, backdates to that moment."""
-        ts, day = self._when_iso(when)
-        logger.info("API: break_start at %s", ts)
+    def break_start(self) -> bool:
+        """Start break (Pausar). Live: Factorial stamps it at server time."""
+        logger.info("API: break_start")
         result = self._graphql_request("BreakStart", BREAK_START_MUTATION, {
-            "now": ts,
-            "date": day,
+            "now": self._now_iso(),
+            "date": self._today_iso(),
             "source": "desktop",
             "timeSettingsBreakConfigurationId": BREAK_CONFIGURATION_ID,
-            "endOn": day,
-            "startOn": day,
+            "endOn": self._today_iso(),
+            "startOn": self._today_iso(),
         })
         return result is not None
 
-    def break_end(self, when: Optional[datetime] = None) -> bool:
-        """End break (Reanudar). If `when` given, backdates to that moment."""
-        ts, day = self._when_iso(when)
-        logger.info("API: break_end at %s", ts)
+    def break_end(self) -> bool:
+        """End break (Reanudar). Live: Factorial stamps it at server time."""
+        logger.info("API: break_end")
         result = self._graphql_request("BreakEnd", BREAK_END_MUTATION, {
-            "now": ts,
-            "date": day,
+            "now": self._now_iso(),
+            "date": self._today_iso(),
             "source": "desktop",
             "systemCreated": False,
-            "endOn": day,
-            "startOn": day,
+            "endOn": self._today_iso(),
+            "startOn": self._today_iso(),
         })
         return result is not None
 
@@ -843,8 +831,8 @@ class FactorialAPI:
 
     # ── High-level action dispatcher ───────────────────────────────────
 
-    def perform_action(self, action: str, max_retries: int = 2, when: Optional[datetime] = None) -> bool:
-        """Execute a clock-in action via API with retry. `when` backdates if given."""
+    def perform_action(self, action: str, max_retries: int = 2) -> bool:
+        """Execute a clock-in action via API with retry."""
         action_map = {
             "fichar":   self.clock_in,
             "pausar":   self.break_start,
@@ -859,7 +847,7 @@ class FactorialAPI:
         fn = action_map[action]
         for attempt in range(1, max_retries + 1):
             try:
-                success = fn(when=when)
+                success = fn()
                 if success:
                     logger.info("Action '%s' succeeded (attempt %d)", action, attempt)
                     return True
@@ -874,12 +862,10 @@ class FactorialAPI:
         notify_action_failed()
         return False
 
-    def execute_smart_action(self, action: str, when: Optional[datetime] = None) -> bool:
-        """Perform action with state-aware validation. `when` backdates if given."""
+    def execute_smart_action(self, action: str) -> bool:
+        """Perform action with state-aware validation."""
         current_state = self.get_current_state()
-        logger.info("Current state: %s, requested action: %s%s",
-                    current_state, action,
-                    f" (backdated to {when.strftime('%H:%M')})" if when else "")
+        logger.info("Current state: %s, requested action: %s", current_state, action)
 
         if current_state is None:
             logger.warning("Cannot determine state — attempting action anyway")
@@ -900,7 +886,7 @@ class FactorialAPI:
             logger.warning("Cannot clock out — not clocked in!")
             return False
 
-        return self.perform_action(action, when=when)
+        return self.perform_action(action)
 
     # ── Backfill (past shifts) ─────────────────────────────────────────
 
@@ -1036,6 +1022,41 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
             logger.error("Failed to parse shifts: %s", e)
             return {}
 
+    def get_today_slot_status(self) -> list[dict]:
+        """Return today's expected slots with live status from the Factorial API.
+
+        Each item: {label, clock_in, clock_out, is_break, status} where status is
+        'filled' (matching shift present), 'missed' (end-time passed, no shift),
+        or 'pending' (not yet due).
+        """
+        today = datetime.now(TZ).date()
+        today_str = today.isoformat()
+        existing = self.get_shifts_for_range(today, today)
+        shifts = existing.get(today_str, [])
+        missing = self._get_missing_shift_slots(shifts, today_str)
+        missing_keys = {(c_in, c_out, is_br) for _, c_in, c_out, is_br in missing}
+
+        from config import get_shift_slots_for_date
+        now = datetime.now(TZ)
+        out: list[dict] = []
+        for label, clock_in, clock_out, is_break in get_shift_slots_for_date(today):
+            h, m = [int(x) for x in clock_out.split(":")]
+            end_dt = datetime(today.year, today.month, today.day, h, m, tzinfo=TZ)
+            if (clock_in, clock_out, is_break) not in missing_keys:
+                status = "filled"
+            elif end_dt <= now:
+                status = "missed"
+            else:
+                status = "pending"
+            out.append({
+                "label": label,
+                "clock_in": clock_in,
+                "clock_out": clock_out,
+                "is_break": is_break,
+                "status": status,
+            })
+        return out
+
     def _calculate_worked_minutes(self, shifts: list[dict]) -> float:
         """Calculate total worked minutes from a list of shifts."""
         total = 0.0
@@ -1146,8 +1167,21 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
             return f"{offset[:3]}:{offset[3:]}"
         return "+02:00"  # default CET
 
-    def backfill_date(self, target_date: str, employee_id: Optional[str] = None) -> bool:
-        """Fill a single past date with the configured shift schedule."""
+    def backfill_date(
+        self,
+        target_date: str,
+        employee_id: Optional[str] = None,
+        until_now: bool = False,
+    ) -> bool:
+        """Fill a single date with the configured shift schedule.
+
+        Args:
+            target_date: ISO date string.
+            employee_id: optional, auto-fetched if omitted.
+            until_now: if True (typical for today), only create slots whose
+                end-time is <= current Madrid wall-clock time. Future slots
+                are left untouched so the day can continue normally.
+        """
         if not employee_id:
             employee_id = self._get_employee_id()
         if not employee_id:
@@ -1160,8 +1194,46 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
         shifts = existing.get(target_date, [])
 
         missing_slots = self._get_missing_shift_slots(shifts, target_date)
+
+        if until_now:
+            # Safety: don't add slots on top of an existing non-matching live shift
+            expected_slots = {
+                (c_in, c_out, is_br)
+                for _, c_in, c_out, is_br in get_shift_slots_for_date(target_d)
+            }
+            stray = []
+            for shift in shifts:
+                norm = self._normalize_shift_slot(shift)
+                if norm is not None and norm not in expected_slots:
+                    stray.append(norm)
+            if stray:
+                logger.warning(
+                    "Refusing to backfill %s — %d existing shift(s) don't match "
+                    "the expected schedule: %s. Delete or edit them in the "
+                    "Factorial UI first, then retry.",
+                    target_date, len(stray), stray,
+                )
+                return False
+
+            now = datetime.now(TZ)
+            today_str = now.date().isoformat()
+            if target_date == today_str:
+                cutoff = now
+                kept: list[tuple[str, str, str, bool]] = []
+                for label, clock_in, clock_out, is_break in missing_slots:
+                    h, m = [int(x) for x in clock_out.split(":")]
+                    end_dt = datetime(target_d.year, target_d.month, target_d.day, h, m, tzinfo=TZ)
+                    if end_dt <= cutoff:
+                        kept.append((label, clock_in, clock_out, is_break))
+                    else:
+                        logger.info(
+                            "Skipping future slot %s (%s-%s) — not yet ended",
+                            label, clock_in, clock_out,
+                        )
+                missing_slots = kept
+
         if not missing_slots:
-            return True  # already filled
+            return True  # nothing to do
 
         if shifts:
             logger.warning(

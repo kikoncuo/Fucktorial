@@ -132,6 +132,10 @@ def main() -> None:
         help="Backfill past N days of missing shifts (default: 7)",
     )
     mode.add_argument(
+        "--backfill-today", action="store_true",
+        help="Backfill today's missed slots (only slots whose end-time has passed)",
+    )
+    mode.add_argument(
         "--refresh", action="store_true",
         help="Refresh cookies from your real Chrome (no browser launch), then exit",
     )
@@ -158,6 +162,7 @@ def main() -> None:
         "refresh (chrome)" if args.refresh
         else "refresh (browser)" if args.refresh_browser
         else f"backfill {args.backfill}d" if args.backfill is not None
+        else "backfill-today" if args.backfill_today
         else "now" if args.now
         else "force " + args.force if args.force
         else "schedule"
@@ -216,6 +221,20 @@ def main() -> None:
             filled = sum(1 for v in results.values() if v)
             total = len(results)
             logger.info("Result: %d/%d dates filled", filled, total)
+        elif args.backfill_today:
+            from datetime import date as _date
+            today = _date.today().isoformat()
+            logger.info("Backfilling today's missed slots (until_now=True)...")
+            slots = api.get_today_slot_status()
+            for s in slots:
+                logger.info("  %-18s %s-%s  %s",
+                            s["label"], s["clock_in"], s["clock_out"], s["status"])
+            missed = [s for s in slots if s["status"] == "missed"]
+            if not missed:
+                logger.info("Nothing to backfill — no missed slots yet")
+            else:
+                ok = api.backfill_date(today, until_now=True)
+                logger.info("Backfill today: %s", "OK" if ok else "FAILED")
         elif args.force:
             run_force_mode(api, args.force)
         elif args.now:

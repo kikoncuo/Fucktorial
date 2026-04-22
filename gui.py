@@ -132,11 +132,11 @@ class FucktorialApp:
         plan_frame = ttk.LabelFrame(self.root, text="Today", style="Section.TLabelframe")
         plan_frame.pack(fill="x", **pad)
         self.plan_tree = ttk.Treeview(plan_frame, columns=("time", "status"), show="tree headings", height=4)
-        self.plan_tree.heading("#0", text="Action")
-        self.plan_tree.heading("time", text="Time")
+        self.plan_tree.heading("#0", text="Slot")
+        self.plan_tree.heading("time", text="Window")
         self.plan_tree.heading("status", text="Status")
         self.plan_tree.column("#0", width=260)
-        self.plan_tree.column("time", width=120, anchor="center")
+        self.plan_tree.column("time", width=140, anchor="center")
         self.plan_tree.column("status", width=200, anchor="center")
         self.plan_tree.pack(fill="x", padx=8, pady=6)
 
@@ -211,21 +211,44 @@ class FucktorialApp:
         self._refresh_plan()
         self.root.after(5000, self._pump_plan)
 
-    # ── Plan view ────────────────────────────────────────────────────
+    # ── Plan view (live from Factorial API) ──────────────────────────
     def _refresh_plan(self) -> None:
         today = datetime.now().date()
         self.plan_tree.delete(*self.plan_tree.get_children())
         if not is_workday(today):
             self.plan_tree.insert("", "end", text="(not a workday)", values=("—", "—"))
             return
-        state = load_state()
-        today_state = state.get(today.isoformat(), {})
-        for action, sched_dt in compute_today_actions():
-            status = today_state.get(action, {}).get("status", "pending")
+        if not self.api.has_cookies():
+            self.plan_tree.insert("", "end", text="(log in first)", values=("—", "—"))
+            return
+        # Fetch status in a background thread; the tree is refreshed when it returns.
+        if getattr(self, "_plan_fetch_inflight", False):
+            return
+        self._plan_fetch_inflight = True
+
+        def _fetch():
+            try:
+                slots = self.api.get_today_slot_status()
+            except Exception:
+                logging.getLogger("gui").exception("Failed to refresh today's plan")
+                slots = None
+            self.root.after(0, lambda: self._apply_plan(slots))
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _apply_plan(self, slots) -> None:
+        self._plan_fetch_inflight = False
+        if slots is None:
+            self.plan_tree.insert("", "end", text="(couldn't load plan)", values=("—", "—"))
+            return
+        self.plan_tree.delete(*self.plan_tree.get_children())
+        icon = {"filled": "✓ filled", "missed": "✗ missed", "pending": "· pending"}
+        for s in slots:
+            label = ("Break " if s["is_break"] else "") + s["label"]
             self.plan_tree.insert(
                 "", "end",
-                text=self.ACTION_LABELS.get(action, action),
-                values=(sched_dt.strftime("%H:%M"), status),
+                text=label,
+                values=(f'{s["clock_in"]}–{s["clock_out"]}', icon.get(s["status"], s["status"])),
             )
 
     # ── Login flow ───────────────────────────────────────────────────
@@ -391,10 +414,55 @@ class FucktorialApp:
 
         if not self.api.has_cookies() or not self.api.test_cookies():
             messagebox.showwarning("Fucktorial",
-                                   "You need to log in before starting the daemon.")
+                                   "You need to log in before starting automatic mode.")
             return
 
         set_schedule_mode(self.schedule_mode.get())
+
+        # ── Check for missed slots before starting ─────────────────
+        self.daemon_btn.configure(state="disabled")
+        self.daemon_status_var.set("Checking today…")
+
+        def _precheck():
+            try:
+                slots = self.api.get_today_slot_status()
+            except Exception:
+                logging.getLogger("gui").exception("Pre-start slot check failed")
+                slots = []
+            missed = [s for s in slots if s["status"] == "missed"]
+            self.root.after(0, lambda: self._on_daemon_precheck_done(missed))
+
+        threading.Thread(target=_precheck, daemon=True).start()
+
+    def _on_daemon_precheck_done(self, missed: list) -> None:
+        if missed:
+            lines = "\n".join(f"  • {s['label']}  ({s['clock_in']}–{s['clock_out']})"
+                              for s in missed)
+            choice = messagebox.askyesnocancel(
+                "Missed slots today",
+                "Looks like today's schedule has slots that already passed without "
+                "being recorded:\n\n" + lines +
+                "\n\nBackfill these now before starting automatic mode?\n\n"
+                "Yes — backfill and then start.\n"
+                "No — start without backfilling.\n"
+                "Cancel — don't start."
+            )
+            if choice is None:
+                self.daemon_btn.configure(state="normal")
+                self.daemon_status_var.set("Stopped")
+                return
+            if choice:
+                today = datetime.now().date().isoformat()
+                ok = self.api.backfill_date(today, until_now=True)
+                if not ok:
+                    messagebox.showwarning(
+                        "Fucktorial",
+                        "Backfill refused or failed (see log). "
+                        "Starting anyway — review your Factorial day after.")
+                self._refresh_plan()
+        self._actually_start_daemon()
+
+    def _actually_start_daemon(self) -> None:
         scheduler_mod._running = True
 
         def _run():
@@ -408,7 +476,7 @@ class FucktorialApp:
         self.daemon_thread = threading.Thread(target=_run, daemon=True)
         self.daemon_thread.start()
         self.daemon_status_var.set("Running")
-        self.daemon_btn.configure(text="Stop")
+        self.daemon_btn.configure(text="Stop", state="normal")
 
     def _check_daemon_stopped(self) -> None:
         if self.daemon_thread and self.daemon_thread.is_alive():
@@ -431,10 +499,9 @@ class FucktorialApp:
     def on_manual_action(self, action: str) -> None:
         now = datetime.now().astimezone()
         sched = self._scheduled_time_for(action)
-        when = None  # None = use now
+        use_backfill = False
 
         if sched is not None and sched < now:
-            # Ensure tz-aware comparison
             try:
                 late_minutes = int((now - sched).total_seconds() // 60)
             except Exception:
@@ -444,13 +511,14 @@ class FucktorialApp:
                     "Record at scheduled time?",
                     f"The scheduled time for '{self.ACTION_LABELS.get(action, action)}' "
                     f"was {sched.strftime('%H:%M')} ({late_minutes} min ago).\n\n"
-                    "Yes — record it at the scheduled time (recommended).\n"
-                    "No — record it right now instead.\n"
+                    "Yes — fill in today's missed slots up to now "
+                    "(the way 'Backfill' does for past days).\n"
+                    "No — clock in live, at the current time.\n"
                     "Cancel — don't do anything.",
                 )
                 if result is None:
                     return
-                when = sched if result else None
+                use_backfill = bool(result)
         else:
             if not messagebox.askyesno(
                 "Fucktorial",
@@ -459,12 +527,21 @@ class FucktorialApp:
 
         def _run():
             try:
-                ok = self.api.execute_smart_action(action, when=when)
-                if ok:
+                if use_backfill:
                     today = datetime.now().date().isoformat()
-                    state = init_today(load_state())
-                    mark_action(state, today, action, "completed")
-                    notify_action_completed()
+                    ok = self.api.backfill_date(today, until_now=True)
+                    if not ok:
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "Fucktorial",
+                            "Couldn't backfill today. Check the log — "
+                            "existing shifts may need to be edited in Factorial first."))
+                else:
+                    ok = self.api.execute_smart_action(action)
+                    if ok:
+                        today = datetime.now().date().isoformat()
+                        state = init_today(load_state())
+                        mark_action(state, today, action, "completed")
+                        notify_action_completed()
             except Exception:
                 logging.getLogger("gui").exception("Manual action failed")
             self.root.after(0, self._refresh_plan)
