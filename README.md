@@ -16,7 +16,7 @@ It talks directly to Factorial's GraphQL API (no janky browser automation in the
 
 ## How it works
 
-1. **Cookies** are grabbed once from your Chrome profile via Playwright, saved to `factorial_cookies.json`, and reused for API calls. No password handling, no 2FA dance — if your browser is logged in, the script is logged in.
+1. **Cookies** are grabbed from a persistent Playwright Chromium profile (`browser_data/`) that stays logged into Factorial across runs. They're saved to `factorial_cookies.json` and reused for API calls. When the API starts returning 401/403, the script silently reopens the profile, pulls fresh cookies, and retries — **no manual refresh on a schedule**. No password handling, no 2FA dance.
 2. The **scheduler** wakes up periodically (every 30s by default), checks the schedule for today, and fires the next pending action if it's due.
 3. Each action (`fichar`, `pausar`, `reanudar`, `salida`) is a single GraphQL mutation. It's fast, it's boring, it works.
 4. State is kept in `clock_state.json` so you can restart the daemon without double-firing.
@@ -46,16 +46,15 @@ The script will `pip install` these itself on first run if they're missing, but 
 
 ## One-time setup
 
-1. Log into Factorial in Chrome as you normally would.
-2. Run the cookie refresh:
+1. Run the first-time login:
 
    ```bash
    python main.py --refresh
    ```
 
-   A Chromium window opens, logs into Factorial using your existing browser session (via a persistent `browser_data/` profile), grabs the cookies it needs, and closes. You should only have to do this when cookies expire (~every 12h by default, controlled by `COOKIES_STALE_AFTER_HOURS`).
+   A Chromium window opens against the persistent `browser_data/` profile. Log into Factorial in that window once. Close it. Cookies get saved to `factorial_cookies.json` and the profile stays logged in across runs — so from here on, whenever the API returns 401/403, the script reopens that same profile headlessly and pulls fresh cookies on its own. You should basically never have to run `--refresh` again unless Factorial forces you out of the profile (password change, 2FA, etc.).
 
-3. Edit `config.py` and set `COMPANY_NAME` to whatever your Factorial company is called. It's set to `Laberit Sistemas S.L.` by default because that's where this was written — change it or the company selector page will haunt you.
+2. Edit `config.py` and set `COMPANY_NAME` to whatever your Factorial company is called. It's set to `Laberit Sistemas S.L.` by default because that's where this was written — change it or the company selector page will haunt you.
 
 ---
 
@@ -93,13 +92,13 @@ python main.py --backfill 30     # you hedonist
 
 It walks each workday backwards, skips weekends and holidays, skips days that already have shifts, and posts the expected slots (full day, or `09:00–15:00` on Fridays in `friday-6h` mode). Came back from a week off and Factorial is glaring at you? `--backfill 10` and go make coffee.
 
-### Cookie refresh only
+### Cookie refresh (rarely needed)
 
 ```bash
 python main.py --refresh
 ```
 
-Use when the API starts returning 401s.
+Only needed for the initial login, or if the persistent browser profile gets kicked out (e.g. password change, 2FA re-prompt, you deleted `browser_data/`). In normal operation the script auto-refreshes cookies on 401/403 — you don't need to babysit this.
 
 ---
 
@@ -115,7 +114,6 @@ All in `config.py`:
 | `STANDARD_SHIFT_SLOTS` / `FRIDAY_SHIFT_SLOTS_6H` | What backfill posts |
 | `GRACE_WINDOW_MINUTES` | How late an action can still fire (default `30`) |
 | `SLEEP_INTERVAL_SECONDS` | Scheduler poll interval (default `30`) |
-| `COOKIES_STALE_AFTER_HOURS` | Auto-refresh cookies after this (default `12`) |
 | `TIMEZONE` | `Europe/Madrid` — change if you work elsewhere |
 | `COMPANY_NAME` | Your Factorial tenant name |
 | `BREAK_CONFIGURATION_ID` | The `break_configuration_id` captured from a real session. If breaks stop registering, re-capture this from DevTools → Network. |
@@ -140,7 +138,7 @@ All in `config.py`:
 Probably. It's also against my will to click the same button 90 times a week. We all have our crosses to bear.
 
 **Will I get fired?**
-Only if your manager reads this README. If they do, hi, the script accurately reflects my actual working hours, which is more than can be said for the UI that expected me to log them in real-time while also, you know, working.
+Not unless your manager is somehow a contributor to this project. In which case: hi team, I'm the manager, this is sanctioned, please stop clicking 90 buttons a week on my behalf and go do actual work.
 
 **Why can't I just edit the whole week in one go in Factorial's UI?**
 Excellent question. Please forward it to Factorial.
