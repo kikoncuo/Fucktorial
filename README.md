@@ -68,11 +68,14 @@ The script will `pip install` these itself on first run if they're missing, but 
 
 ### Running the GUI from source
 
-```bash
-python gui.py
-```
+**Zero-friction launchers** (no Python setup needed — they bootstrap everything):
 
-Same features as the packaged app, no download required.
+- **macOS:** double-click `launch-mac.command`. On first run it installs Homebrew (if missing), a Python with Tk (if missing), a local venv, the deps, and Chromium. On subsequent runs it just launches.
+- **Windows:** double-click `launch-windows.bat`. First run installs Python via `winget` (if missing), creates a local venv, installs deps, installs Chromium. Subsequent runs just launch.
+
+If macOS refuses to open `launch-mac.command` because it's "from an unidentified developer", right-click → Open → Open.
+
+**If you already have Python ≥3.11 with Tk:** just run `python gui.py` directly.
 
 ---
 
