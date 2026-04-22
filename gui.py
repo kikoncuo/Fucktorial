@@ -582,10 +582,28 @@ class FucktorialApp:
                     today = datetime.now().date().isoformat()
                     ok = self.api.backfill_date(today, until_now=True)
                     if not ok:
+                        # Offer to wipe stray shifts and retry.
+                        proceed = {"v": False}
+                        def ask_reset():
+                            proceed["v"] = messagebox.askyesno(
+                                "Reset today and retry?",
+                                "Backfill refused — today has shifts that don't match "
+                                "the expected schedule.\n\n"
+                                "Delete ALL of today's existing shifts and recreate them "
+                                "from the schedule?\n\n"
+                                "This uses the Factorial API and is destructive.")
+                        evt = threading.Event()
+                        def dispatch():
+                            ask_reset(); evt.set()
+                        self.root.after(0, dispatch); evt.wait()
+                        if proceed["v"]:
+                            n = self.api.delete_all_shifts_for_date(today)
+                            logging.getLogger("gui").info("Deleted %d stray shift(s) — retrying backfill", n)
+                            ok = self.api.backfill_date(today, until_now=True)
+                    if not ok:
                         self.root.after(0, lambda: messagebox.showwarning(
                             "Fucktorial",
-                            "Couldn't backfill today. Check the log — "
-                            "existing shifts may need to be edited in Factorial first."))
+                            "Couldn't backfill today. Check the log for details."))
                 else:
                     ok = self.api.execute_smart_action(action)
                     if ok:

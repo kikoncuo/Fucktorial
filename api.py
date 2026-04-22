@@ -890,6 +890,66 @@ class FactorialAPI:
 
     # ── Backfill (past shifts) ─────────────────────────────────────────
 
+    DELETE_SHIFT_MUTATION = """
+mutation DeleteAttendanceShift($id: ID!) {
+  attendanceMutations {
+    deleteAttendanceShift(id: $id) {
+      errors {
+        ... on SimpleError { message type __typename }
+        ... on StructuredError { field messages __typename }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+"""
+
+    def delete_shift(self, shift_id: str) -> bool:
+        """Delete a single attendance shift by id.
+
+        Factorial's GraphQL mutation name is best-effort — if this ever stops
+        working, capture the real mutation in DevTools and update the query.
+        """
+        logger.info("API: delete shift %s", shift_id)
+        result = self._graphql_request(
+            "DeleteAttendanceShift", self.DELETE_SHIFT_MUTATION, {"id": str(shift_id)},
+        )
+        if result is None:
+            return False
+        # Check nested errors array (GraphQL business-logic errors)
+        try:
+            payload = result["data"]["attendanceMutations"]["deleteAttendanceShift"]
+            errors = payload.get("errors") or []
+            if errors:
+                logger.error("deleteAttendanceShift errors: %s", errors)
+                return False
+            return True
+        except (KeyError, TypeError):
+            logger.error("Unexpected deleteAttendanceShift response: %s", result)
+            return False
+
+    def delete_all_shifts_for_date(self, target_date: str, employee_id: Optional[str] = None) -> int:
+        """Delete every shift on a given date. Returns count deleted."""
+        if not employee_id:
+            employee_id = self._get_employee_id()
+        if not employee_id:
+            return 0
+        d = date.fromisoformat(target_date)
+        raw = self.get_shifts_for_range(d, d, employee_id)
+        shifts = raw.get(target_date, [])
+        deleted = 0
+        for s in shifts:
+            sid = s.get("id")
+            if not sid:
+                continue
+            if self.delete_shift(sid):
+                deleted += 1
+                time_module.sleep(0.3)
+        logger.info("Deleted %d/%d shifts for %s", deleted, len(shifts), target_date)
+        return deleted
+
     CREATE_SHIFT_MUTATION = """
 mutation CreateAttendanceShift($clockIn: ISO8601DateTime, $clockOut: ISO8601DateTime, $date: ISO8601Date!, $employeeId: ID!, $halfDay: String, $locationType: AttendanceShiftLocationTypeEnum, $observations: String, $referenceDate: ISO8601Date!, $source: AttendanceEnumsShiftSourceEnum, $timeSettingsBreakConfigurationId: ID, $workable: Boolean) {
   attendanceMutations {
@@ -1058,24 +1118,32 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
         return out
 
     def _calculate_worked_minutes(self, shifts: list[dict]) -> float:
-        """Calculate total worked minutes from a list of shifts."""
+        """Calculate total worked minutes from a list of shifts (excludes breaks)."""
         total = 0.0
         for s in shifts:
-            if s.get("clockIn") and s.get("clockOut"):
-                # Parse ISO datetime strings
-                cin = datetime.fromisoformat(s["clockIn"].replace("Z", "+00:00"))
-                cout = datetime.fromisoformat(s["clockOut"].replace("Z", "+00:00"))
-                total += (cout - cin).total_seconds() / 60
+            if not (s.get("clockIn") and s.get("clockOut")):
+                continue
+            # Skip breaks — they're not "worked" time.
+            if s.get("timeSettingsBreakConfiguration") or s.get("workable") is False:
+                continue
+            cin = datetime.fromisoformat(s["clockIn"].replace("Z", "+00:00"))
+            cout = datetime.fromisoformat(s["clockOut"].replace("Z", "+00:00"))
+            total += (cout - cin).total_seconds() / 60
         return total
 
     def _normalize_shift_slot(self, shift: dict) -> Optional[tuple[str, str, bool]]:
-        """Convert an existing shift into a comparable (clock_in, clock_out, is_break) tuple."""
+        """Convert an existing shift into a comparable (clock_in, clock_out, is_break) tuple.
+
+        Factorial stores and returns wall-clock times labelled as UTC (it strips
+        incoming offsets). We match on wall-clock HH:MM directly — no timezone
+        conversion — which makes the round-trip robust regardless of what
+        Factorial does internally with the offset.
+        """
         if not shift.get("clockIn") or not shift.get("clockOut"):
             return None
-
         try:
-            cin = datetime.fromisoformat(shift["clockIn"].replace("Z", "+00:00")).astimezone(TZ)
-            cout = datetime.fromisoformat(shift["clockOut"].replace("Z", "+00:00")).astimezone(TZ)
+            cin = datetime.fromisoformat(shift["clockIn"].replace("Z", "+00:00"))
+            cout = datetime.fromisoformat(shift["clockOut"].replace("Z", "+00:00"))
         except ValueError:
             return None
 
@@ -1136,9 +1204,11 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
             employee_id: The employee ID
             is_break: If True, this is a break/pause shift
         """
-        tz_offset = self._get_tz_offset(target_date)
-        clock_in_iso = f"{target_date}T{clock_in}:00{tz_offset}"
-        clock_out_iso = f"{target_date}T{clock_out}:00{tz_offset}"
+        # Factorial stores times wall-clock labelled as UTC. Send with 'Z'
+        # (no offset) so our intended local HH:MM is what Factorial keeps —
+        # otherwise it strips our offset and ends up 2h off in DST.
+        clock_in_iso = f"{target_date}T{clock_in}:00.000Z"
+        clock_out_iso = f"{target_date}T{clock_out}:00.000Z"
 
         from config import BREAK_CONFIGURATION_ID
 

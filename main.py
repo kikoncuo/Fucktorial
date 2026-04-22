@@ -136,6 +136,14 @@ def main() -> None:
         help="Backfill today's missed slots (only slots whose end-time has passed)",
     )
     mode.add_argument(
+        "--reset-today", action="store_true",
+        help="DANGER: delete every shift for today via the Factorial API",
+    )
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="Skip confirmation prompts for destructive actions",
+    )
+    mode.add_argument(
         "--refresh", action="store_true",
         help="Refresh cookies from your real Chrome (no browser launch), then exit",
     )
@@ -163,6 +171,7 @@ def main() -> None:
         else "refresh (browser)" if args.refresh_browser
         else f"backfill {args.backfill}d" if args.backfill is not None
         else "backfill-today" if args.backfill_today
+        else "reset-today" if args.reset_today
         else "now" if args.now
         else "force " + args.force if args.force
         else "schedule"
@@ -221,6 +230,15 @@ def main() -> None:
             filled = sum(1 for v in results.values() if v)
             total = len(results)
             logger.info("Result: %d/%d dates filled", filled, total)
+        elif args.reset_today:
+            from datetime import date as _date
+            today = _date.today().isoformat()
+            if not args.yes:
+                logger.error("Refusing to reset today without --yes (destructive).")
+                sys.exit(1)
+            logger.warning("Deleting all shifts for %s ...", today)
+            n = api.delete_all_shifts_for_date(today)
+            logger.info("Deleted %d shift(s) for %s", n, today)
         elif args.backfill_today:
             from datetime import date as _date
             today = _date.today().isoformat()
