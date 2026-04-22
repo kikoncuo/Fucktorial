@@ -480,6 +480,65 @@ class FactorialAPI:
     def _today_iso(self) -> str:
         return datetime.now(TZ).date().isoformat()
 
+    def load_cookies_from_chrome(self, browser: str = "chrome") -> bool:
+        """Pull Factorial cookies directly from the user's real Chrome browser.
+
+        Uses pycookiecheat to read & decrypt Chrome's cookie store (Keychain on
+        macOS, DPAPI on Windows). No Cloudflare challenge because no page load.
+
+        Args:
+            browser: 'chrome', 'chromium', 'brave', 'edge', 'opera', 'slack', 'arc'
+
+        Returns True if cookies were extracted and validated via test_cookies().
+        """
+        try:
+            from pycookiecheat import chrome_cookies, BrowserType
+        except ImportError:
+            logger.error("pycookiecheat not installed — run: pip install pycookiecheat")
+            return False
+
+        browser_map = {
+            "chrome":   BrowserType.CHROME,
+            "chromium": BrowserType.CHROMIUM,
+            "brave":    BrowserType.BRAVE,
+            "slack":    BrowserType.SLACK,
+        }
+        bt = browser_map.get(browser.lower(), BrowserType.CHROME)
+
+        extracted: dict[str, str] = {}
+        # Factorial sets cookies under both api.factorialhr.com and app.factorialhr.com
+        for url in ("https://app.factorialhr.com",
+                    "https://api.factorialhr.com"):
+            try:
+                cookies = chrome_cookies(url, browser=bt)
+            except Exception as e:
+                logger.warning("Failed to read %s cookies from %s: %s", browser, url, e)
+                continue
+            if cookies:
+                extracted.update(cookies)
+
+        if not extracted:
+            logger.warning("No Factorial cookies found in %s — "
+                           "are you logged in at https://app.factorialhr.com?", browser)
+            return False
+
+        # Stash previous cookies so we can roll back if invalid
+        previous = dict(self._cookies)
+        self._cookies = extracted
+
+        if not self.test_cookies():
+            logger.warning("Cookies extracted from %s but they don't validate — "
+                           "log in at https://app.factorialhr.com in %s and try again",
+                           browser, browser)
+            self._cookies = previous
+            return False
+
+        self._save_cookies()
+        key_names = [n for n in ["_factorial_session_v2", "cf_clearance"] if n in extracted]
+        logger.info("Loaded %d cookies from %s (key cookies: %s)",
+                    len(extracted), browser, key_names)
+        return True
+
     def open_login_browser(self):
         """Open a headed Chromium against the persistent profile and return (pw, context).
 

@@ -89,7 +89,17 @@ If macOS refuses to open `launch-mac.command` because it's "from an unidentified
 
    A Chromium window opens against the persistent `browser_data/` profile. Log into Factorial in that window once. Close it. Cookies get saved to `factorial_cookies.json` and the profile stays logged in across runs — so from here on, whenever the API returns 401/403, the script reopens that same profile headlessly and pulls fresh cookies on its own. You should basically never have to run `--refresh` again unless Factorial forces you out of the profile (password change, 2FA, etc.).
 
-2. Edit `config.py` and set `COMPANY_NAME` to whatever your Factorial company is called. It's set to `Laberit Sistemas S.L.` by default because that's where this was written — change it or the company selector page will haunt you.
+2. **Recommended: skip the Playwright browser and use your real Chrome.**
+
+   ```bash
+   python main.py --from-chrome
+   ```
+
+   This uses [`pycookiecheat`](https://github.com/n8henrie/pycookiecheat) to read Chrome's cookie store via the OS keychain (macOS) or DPAPI (Windows). No pages load, no Cloudflare bot check to fail. On first macOS run you'll get a Keychain prompt asking to allow access to "Chrome Safe Storage" — approve once and you're done.
+
+   Prerequisite: you must be logged into Factorial in your regular Chrome. The GUI's **Log In** button tries this first automatically and only falls back to the Playwright browser if no valid cookies are found.
+
+3. Edit `config.py` and set `COMPANY_NAME` to whatever your Factorial company is called. It's set to `Laberit Sistemas S.L.` by default because that's where this was written — change it or the company selector page will haunt you.
 
 ---
 

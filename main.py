@@ -133,7 +133,11 @@ def main() -> None:
     )
     mode.add_argument(
         "--refresh", action="store_true",
-        help="Refresh cookies from browser, then exit",
+        help="Refresh cookies from Playwright browser, then exit",
+    )
+    mode.add_argument(
+        "--from-chrome", action="store_true",
+        help="Load cookies directly from your real Chrome (no browser launch), then exit",
     )
     parser.add_argument(
         "--schedule-mode",
@@ -152,6 +156,7 @@ def main() -> None:
     logger.info("Factorial HR Clock-in Automation starting (API mode)")
     mode_str = (
         "refresh" if args.refresh
+        else "from-chrome" if args.from_chrome
         else f"backfill {args.backfill}d" if args.backfill is not None
         else "now" if args.now
         else "force " + args.force if args.force
@@ -182,6 +187,16 @@ def main() -> None:
                 logger.info("Cookies refreshed successfully!")
             else:
                 logger.error("Failed to refresh cookies")
+                sys.exit(1)
+            return
+
+        if args.from_chrome:
+            logger.info("Loading cookies directly from your Chrome browser...")
+            if api.load_cookies_from_chrome("chrome"):
+                logger.info("Cookies loaded and validated from Chrome!")
+            else:
+                logger.error("Failed to load valid cookies from Chrome. "
+                             "Make sure you're logged into Factorial in Chrome.")
                 sys.exit(1)
             return
 

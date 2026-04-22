@@ -252,6 +252,43 @@ class FucktorialApp:
 
     def on_login_click(self) -> None:
         self.login_btn.configure(state="disabled")
+        self.login_status_var.set("Reading cookies from Chrome…")
+        self._draw_dot("#cc9")
+
+        def _try_chrome():
+            ok = False
+            try:
+                ok = self.api.load_cookies_from_chrome("chrome")
+            except Exception:
+                logging.getLogger("gui").exception("Chrome cookie read failed")
+            self.root.after(0, lambda: self._after_chrome_attempt(ok))
+
+        threading.Thread(target=_try_chrome, daemon=True).start()
+
+    def _after_chrome_attempt(self, ok: bool) -> None:
+        if ok:
+            self._apply_login_status(True)
+            self.login_btn.configure(state="normal")
+            return
+        # Chrome extraction failed — offer the browser fallback
+        self.login_status_var.set("Not logged in")
+        self._draw_dot("#c03030")
+        self.login_btn.configure(state="normal")
+        choice = messagebox.askyesno(
+            "Fucktorial",
+            "Couldn't read valid Factorial cookies from your Chrome.\n\n"
+            "Make sure you're logged into Factorial at https://app.factorialhr.com "
+            "in your regular Chrome browser.\n\n"
+            "Try that now and click Yes to retry.\n"
+            "Or click No to open a separate login browser instead.",
+        )
+        if choice:
+            self.on_login_click()
+        else:
+            self._start_browser_login()
+
+    def _start_browser_login(self) -> None:
+        self.login_btn.configure(state="disabled")
         self.login_status_var.set("Opening browser…")
         self._draw_dot("#cc9")
 
