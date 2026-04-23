@@ -289,7 +289,12 @@ class FucktorialApp:
             self.plan_status_var.set("Load failed")
             return
         self.plan_tree.delete(*self.plan_tree.get_children())
-        icon = {"filled": "✓ filled", "missed": "✗ missed", "pending": "· pending"}
+        icon = {
+            "filled":  "✓ filled",
+            "active":  "▶ in progress",
+            "missed":  "✗ missed",
+            "pending": "· pending",
+        }
         for s in slots:
             label = ("Break " if s["is_break"] else "") + s["label"]
             self.plan_tree.insert(
