@@ -28,6 +28,7 @@ except ImportError:
     _HAS_FCNTL = False
 
 from config import (
+    DATA_DIR,
     LOCK_FILE,
     LOG_FILE,
     SCRIPT_DIR,
@@ -183,6 +184,7 @@ def main() -> None:
     logger.info("Mode: %s", mode_str)
     logger.info("Schedule mode: %s", args.schedule_mode)
     logger.info("Script dir: %s", SCRIPT_DIR)
+    logger.info("Data dir:   %s", DATA_DIR)
     logger.info("Python: %s", sys.version.split()[0])
 
     # ── Dependencies ─────────────────────────────────────────────────

@@ -106,12 +106,40 @@ COOKIES_STALE_AFTER_HOURS = 12  # re-read cookies from browser after this
 
 # ── File paths ─────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).parent.resolve()
-STATE_FILE = SCRIPT_DIR / "clock_state.json"
-LOG_FILE = SCRIPT_DIR / "factorial.log"
-LOCK_FILE = SCRIPT_DIR / "factorial.lock"
-BROWSER_DATA_DIR = SCRIPT_DIR / "browser_data"
-COOKIES_FILE = SCRIPT_DIR / "factorial_cookies.json"
-LOCAL_HOLIDAYS_FILE = SCRIPT_DIR / "local_holidays.json"
+
+
+def _user_data_dir() -> Path:
+    """Writable per-user directory for Fucktorial state.
+
+    Frozen bundles (PyInstaller .app / .exe) can't write inside the bundle —
+    macOS App Translocation makes it read-only — so we use the platform's
+    standard per-user data location. Source runs keep using the project
+    folder so existing files aren't orphaned on upgrade.
+    """
+    import os
+    import sys
+    if not getattr(sys, "frozen", False):
+        return SCRIPT_DIR
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "Fucktorial"
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
+        return Path(base) / "Fucktorial"
+    # Linux / BSD / other
+    base = os.environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
+    return Path(base) / "Fucktorial"
+
+
+DATA_DIR = _user_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+STATE_FILE          = DATA_DIR / "clock_state.json"
+LOG_FILE            = DATA_DIR / "factorial.log"
+LOCK_FILE           = DATA_DIR / "factorial.lock"
+BROWSER_DATA_DIR    = DATA_DIR / "browser_data"
+COOKIES_FILE        = DATA_DIR / "factorial_cookies.json"
+LOCAL_HOLIDAYS_FILE = DATA_DIR / "local_holidays.json"
 
 # ── macOS system sounds ────────────────────────────────────────────────────
 SOUND_LOGIN_NEEDED = "/System/Library/Sounds/Sosumi.aiff"
