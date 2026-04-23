@@ -169,36 +169,6 @@ Only needed for the initial login, or if the persistent browser profile gets kic
 
 ---
 
-## Settings
-
-All in `config.py`:
-
-| Setting | What it does |
-|---|---|
-| `DEFAULT_SCHEDULE` | The standard weekday shape: `fichar 09:00 · pausar 14:00 · reanudar 14:30 · salida 18:00` |
-| `FRIDAY_SCHEDULE_6H` | Friday short day: `fichar 09:00 · salida 15:00` |
-| `DEFAULT_SCHEDULE_MODE` | `friday-6h` (default) or `standard` |
-| `STANDARD_SHIFT_SLOTS` / `FRIDAY_SHIFT_SLOTS_6H` | What backfill posts |
-| `GRACE_WINDOW_MINUTES` | How late an action can still fire (default `30`) |
-| `SLEEP_INTERVAL_SECONDS` | Scheduler poll interval (default `30`) |
-| `TIMEZONE` | `Europe/Madrid` — change if you work elsewhere |
-| `COMPANY_NAME` | Your Factorial tenant name |
-| `BREAK_CONFIGURATION_ID` | The `break_configuration_id` captured from a real session. If breaks stop registering, re-capture this from DevTools → Network. |
-| `SOUND_*` | macOS system sounds for login-needed / completed / missed / failed |
-
----
-
-## Files it writes
-
-- `factorial_cookies.json` — your session. **Do not commit this.**
-- `clock_state.json` — what's been done today.
-- `factorial.log` — every decision it made, for when you want to prove it's the script's fault.
-- `factorial.lock` — mutex; delete only if you're sure nothing's running.
-- `browser_data/` — Playwright's persistent Chromium profile, so you don't re-login constantly.
-- `local_holidays.json` (optional) — extra holidays beyond the built-in list.
-
----
-
 ## FAQ
 
 **Is this against the Factorial ToS?**
