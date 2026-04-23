@@ -20,46 +20,114 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Derive version from tag
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Python deps
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller==6.10.0
+          python -m pip install pyinstaller==6.10.0 cairosvg Pillow
           python -m playwright install chromium
 
-      - name: Build with PyInstaller
+      - name: Render icon PNGs from icon.svg
+        shell: bash
+        run: |
+          python - <<'PY'
+          import cairosvg
+          for size in (16, 32, 64, 128, 256, 512, 1024):
+              cairosvg.svg2png(url='icon.svg', write_to=f'icon-{size}.png',
+                               output_width=size, output_height=size)
+          PY
+
+      - name: Build macOS .icns
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          mkdir -p icon.iconset
+          cp icon-16.png   icon.iconset/icon_16x16.png
+          cp icon-32.png   icon.iconset/icon_16x16@2x.png
+          cp icon-32.png   icon.iconset/icon_32x32.png
+          cp icon-64.png   icon.iconset/icon_32x32@2x.png
+          cp icon-128.png  icon.iconset/icon_128x128.png
+          cp icon-256.png  icon.iconset/icon_128x128@2x.png
+          cp icon-256.png  icon.iconset/icon_256x256.png
+          cp icon-512.png  icon.iconset/icon_256x256@2x.png
+          cp icon-512.png  icon.iconset/icon_512x512.png
+          cp icon-1024.png icon.iconset/icon_512x512@2x.png
+          iconutil -c icns icon.iconset
+          ls -la icon.icns
+
+      - name: Build Windows .ico
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from PIL import Image
+          img = Image.open('icon-1024.png')
+          img.save('icon.ico',
+                   sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          PY
+
+      - name: Run PyInstaller
         shell: bash
         run: |
           pyinstaller --noconfirm --clean fucktorial.spec
 
-      - name: Package macOS DMG
+      # ── macOS packaging ────────────────────────────────────────────────
+      - name: Package macOS installable (.dmg) and portable (.zip)
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
           cd dist
-          hdiutil create -volname Fucktorial -srcfolder Fucktorial.app -ov -format UDZO Fucktorial-macOS.dmg
+          hdiutil create -volname Fucktorial -srcfolder Fucktorial.app \
+                         -ov -format UDZO Fucktorial-macOS-Installer.dmg
+          ditto -c -k --keepParent Fucktorial.app Fucktorial-macOS-Portable.zip
+          ls -la Fucktorial-macOS-*
 
-      - name: Package Windows ZIP
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          cd dist
-          Compress-Archive -Path Fucktorial -DestinationPath Fucktorial-Windows.zip -Force
-
-      - name: Upload artifact (macOS)
+      - name: Upload macOS artefacts
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: Fucktorial-macOS
-          path: dist/Fucktorial-macOS.dmg
+          path: |
+            dist/Fucktorial-macOS-Installer.dmg
+            dist/Fucktorial-macOS-Portable.zip
 
-      - name: Upload artifact (Windows)
+      # ── Windows packaging ──────────────────────────────────────────────
+      - name: Install Inno Setup
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Build Windows installable (.exe) and portable (.zip)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+             "/DMyAppVersion=${{ steps.ver.outputs.version }}" `
+             fucktorial.iss
+          Compress-Archive -Path dist\Fucktorial `
+                           -DestinationPath dist\Fucktorial-Windows-Portable.zip -Force
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload Windows artefacts
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: Fucktorial-Windows
-          path: dist/Fucktorial-Windows.zip
+          path: |
+            dist/Fucktorial-Windows-Installer.exe
+            dist/Fucktorial-Windows-Portable.zip
 
   release:
     needs: build
@@ -72,10 +140,12 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/Fucktorial-macOS/Fucktorial-macOS.dmg
-            artifacts/Fucktorial-Windows/Fucktorial-Windows.zip
+            artifacts/Fucktorial-macOS/Fucktorial-macOS-Installer.dmg
+            artifacts/Fucktorial-macOS/Fucktorial-macOS-Portable.zip
+            artifacts/Fucktorial-Windows/Fucktorial-Windows-Installer.exe
+            artifacts/Fucktorial-Windows/Fucktorial-Windows-Portable.zip
           generate_release_notes: true

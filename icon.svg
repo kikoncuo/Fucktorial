@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Fucktorial">
+  <title>Fucktorial</title>
+  <!-- Outer ring with a gap on the top-right (broken out of the cage). -->
+  <path
+    d="M 226,128
+       A 98,98 0 1,1 165,36.5"
+    fill="none"
+    stroke="#e8415c"
+    stroke-width="22"
+    stroke-linecap="round"/>
+  <!-- Avatar silhouette, tilted slightly as if tipping through the gap. -->
+  <g transform="rotate(10 128 132)">
+    <!-- bust -->
+    <ellipse cx="128" cy="220" rx="78" ry="48" fill="#e8415c"/>
+    <!-- head -->
+    <circle cx="128" cy="118" r="38" fill="#e8415c"/>
+  </g>
+</svg>

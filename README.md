@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.svg" alt="Fucktorial" width="160" />
+</p>
+
 # Fucktorial
 
 > A tiny act of protest against Factorial HR's clock-in UX, disguised as a Python automation.
@@ -30,7 +34,14 @@ No Python, no pip, no terminal commands. Clone or download this repo, then doubl
 
 The first click of **Log In** inside the app uses [`pycookiecheat`](https://github.com/n8henrie/pycookiecheat) to read your Factorial cookies directly from your everyday Chrome — no bot-check, no extra login. Just be signed into https://app.factorialhr.com in Chrome first.
 
-Prefer prebuilt binaries instead of a launcher script? Grab the latest **`.dmg`** / **`.zip`** from the [Releases page](https://github.com/kikoncuo/Fucktorial/releases) — built by GitHub Actions on every tagged release.
+Prefer prebuilt binaries instead of a launcher script? Grab the latest build from the [Releases page](https://github.com/kikoncuo/Fucktorial/releases):
+
+- **macOS installable** — `Fucktorial-macOS-Installer.dmg` (drag to `/Applications`)
+- **macOS portable** — `Fucktorial-macOS-Portable.zip` (unzip the `.app` anywhere, run)
+- **Windows installable** — `Fucktorial-Windows-Installer.exe` (Inno Setup, adds Start Menu + uninstaller)
+- **Windows portable** — `Fucktorial-Windows-Portable.zip` (unzip the folder, run `Fucktorial.exe`)
+
+All four builds ship with the icon shown above.
 
 ---
 
