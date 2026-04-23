@@ -35,17 +35,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller==6.10.0 cairosvg Pillow
+          python -m pip install pyinstaller==6.10.0 Pillow
           python -m playwright install chromium
 
-      - name: Render icon PNGs from icon.svg
+      - name: Render icon PNG intermediates from icon-1024.png
         shell: bash
         run: |
           python - <<'PY'
-          import cairosvg
-          for size in (16, 32, 64, 128, 256, 512, 1024):
-              cairosvg.svg2png(url='icon.svg', write_to=f'icon-{size}.png',
-                               output_width=size, output_height=size)
+          from PIL import Image
+          src = Image.open('icon-1024.png').convert('RGBA')
+          for size in (16, 32, 64, 128, 256, 512):
+              src.resize((size, size), Image.LANCZOS).save(f'icon-{size}.png')
           PY
 
       - name: Build macOS .icns
