@@ -297,10 +297,13 @@ class FucktorialApp:
         }
         for s in slots:
             label = ("Break " if s["is_break"] else "") + s["label"]
+            status = icon.get(s["status"], s["status"])
+            if s["status"] == "active" and s.get("worked_minutes") is not None:
+                status = f"▶ {s['worked_minutes']}/{s['expected_minutes']}m"
             self.plan_tree.insert(
                 "", "end",
                 text=label,
-                values=(f'{s["clock_in"]}–{s["clock_out"]}', icon.get(s["status"], s["status"])),
+                values=(f'{s["clock_in"]}–{s["clock_out"]}', status),
             )
         self.plan_status_var.set(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 

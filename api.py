@@ -1100,25 +1100,40 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
         missing_keys = {(c_in, c_out, is_br) for _, c_in, c_out, is_br in missing}
 
         # Open shifts start a slot but don't close it yet.
-        open_starts: set[str] = set()
+        # Map HH:MM start -> parsed clockIn datetime (naive wall-clock).
+        open_starts: dict[str, datetime] = {}
         for s in shifts:
             if s.get("clockIn") and not s.get("clockOut"):
                 try:
                     cin = datetime.fromisoformat(s["clockIn"].replace("Z", "+00:00"))
-                    open_starts.add(cin.strftime("%H:%M"))
+                    open_starts[cin.strftime("%H:%M")] = cin
                 except ValueError:
                     pass
 
         from config import get_shift_slots_for_date
         now = datetime.now(TZ)
+        # Wall-clock "now" for minutes-worked math (matches the naive times
+        # Factorial stores — see _normalize_shift_slot docstring).
+        now_wall = datetime.now().replace(tzinfo=None)
         out: list[dict] = []
         for label, clock_in, clock_out, is_break in get_shift_slots_for_date(today):
-            h, m = [int(x) for x in clock_out.split(":")]
-            end_dt = datetime(today.year, today.month, today.day, h, m, tzinfo=TZ)
+            h_out, m_out = [int(x) for x in clock_out.split(":")]
+            end_dt = datetime(today.year, today.month, today.day, h_out, m_out, tzinfo=TZ)
+            worked_minutes: Optional[int] = None
+            expected_minutes: Optional[int] = None
             if (clock_in, clock_out, is_break) not in missing_keys:
                 status = "filled"
             elif clock_in in open_starts:
                 status = "active"
+                h_in, m_in = [int(x) for x in clock_in.split(":")]
+                end_wall = datetime(today.year, today.month, today.day, h_out, m_out)
+                # Cap worked at the slot window so "active 350/300m" doesn't happen;
+                # once the slot's end has passed, the natural next step is Pausar
+                # (or Salida) to close it.
+                cap = min(now_wall, end_wall)
+                cin_dt = open_starts[clock_in].replace(tzinfo=None)
+                worked_minutes = max(0, int((cap - cin_dt).total_seconds() // 60))
+                expected_minutes = (h_out * 60 + m_out) - (h_in * 60 + m_in)
             elif end_dt <= now:
                 status = "missed"
             else:
@@ -1129,6 +1144,8 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
                 "clock_out": clock_out,
                 "is_break": is_break,
                 "status": status,
+                "worked_minutes": worked_minutes,
+                "expected_minutes": expected_minutes,
             })
         return out
 
