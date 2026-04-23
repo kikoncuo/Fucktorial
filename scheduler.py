@@ -2,6 +2,7 @@
 
 import logging
 import signal
+import threading
 import time as time_module
 from datetime import datetime, timedelta, date
 from typing import Optional
@@ -98,8 +99,14 @@ def run_schedule_mode(api: FactorialAPI) -> None:
     global _running
     _running = True
 
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
+    # Signal handlers only work on the main thread — when the GUI runs this
+    # in a worker thread, skip them. The GUI's Stop button flips `_running`
+    # directly, which is what the signal handler would do anyway.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, _signal_handler)
+        signal.signal(signal.SIGTERM, _signal_handler)
+    else:
+        logger.info("Scheduler running in a worker thread — skipping signal handlers")
 
     logger.info("Starting schedule mode (daemon)")
 
