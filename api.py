@@ -1274,6 +1274,7 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
         target_date: str,
         employee_id: Optional[str] = None,
         until_now: bool = False,
+        clean: bool = False,
     ) -> bool:
         """Fill a single date with the configured shift schedule.
 
@@ -1283,6 +1284,10 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
             until_now: if True (typical for today), only create slots whose
                 end-time is <= current Madrid wall-clock time. Future slots
                 are left untouched so the day can continue normally.
+            clean: if True, DELETE any existing shifts that don't match the
+                expected schedule (open shifts in progress, or closed shifts
+                at unexpected times) before backfilling. If False (default),
+                the call refuses and returns False when such shifts exist.
         """
         if not employee_id:
             employee_id = self._get_employee_id()
@@ -1297,36 +1302,61 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
 
         missing_slots = self._get_missing_shift_slots(shifts, target_date)
 
+        # Safety: identify any shifts that would conflict with the expected slots.
+        expected_slots = {
+            (c_in, c_out, is_br)
+            for _, c_in, c_out, is_br in get_shift_slots_for_date(target_d)
+        }
+        stray_ids: list[str] = []
+        stray_norm: list[tuple] = []
+        open_ids: list[str] = []
+        open_summary: list[str] = []
+        for shift in shifts:
+            sid = shift.get("id")
+            if shift.get("clockIn") and not shift.get("clockOut"):
+                if sid:
+                    open_ids.append(sid)
+                open_summary.append(shift.get("clockIn"))
+                continue
+            norm = self._normalize_shift_slot(shift)
+            if norm is not None and norm not in expected_slots:
+                if sid:
+                    stray_ids.append(sid)
+                stray_norm.append(norm)
+
+        if open_ids or stray_ids:
+            if not clean:
+                if open_ids:
+                    logger.warning(
+                        "Refusing to backfill %s — %d open shift(s) in progress: %s. "
+                        "Close them (click Salida) or pass clean=True to auto-delete them.",
+                        target_date, len(open_ids), open_summary,
+                    )
+                if stray_ids:
+                    logger.warning(
+                        "Refusing to backfill %s — %d existing shift(s) don't match "
+                        "the expected schedule: %s. Pass clean=True to auto-delete them.",
+                        target_date, len(stray_ids), stray_norm,
+                    )
+                return False
+
+            # clean=True: delete bad shifts, then re-query and continue.
+            if open_ids:
+                logger.warning("Cleaning: deleting %d open shift(s) on %s: %s",
+                               len(open_ids), target_date, open_summary)
+            if stray_ids:
+                logger.warning("Cleaning: deleting %d stray shift(s) on %s: %s",
+                               len(stray_ids), target_date, stray_norm)
+            for sid in open_ids + stray_ids:
+                self.delete_shift(sid)
+                time_module.sleep(0.3)
+
+            # Re-fetch after deletes and recompute what's missing.
+            existing = self.get_shifts_for_range(target_d, target_d, employee_id)
+            shifts = existing.get(target_date, [])
+            missing_slots = self._get_missing_shift_slots(shifts, target_date)
+
         if until_now:
-            # Safety: don't add slots on top of an existing non-matching live shift
-            expected_slots = {
-                (c_in, c_out, is_br)
-                for _, c_in, c_out, is_br in get_shift_slots_for_date(target_d)
-            }
-            stray = []
-            open_shifts = []
-            for shift in shifts:
-                if shift.get("clockIn") and not shift.get("clockOut"):
-                    open_shifts.append(shift.get("clockIn"))
-                    continue
-                norm = self._normalize_shift_slot(shift)
-                if norm is not None and norm not in expected_slots:
-                    stray.append(norm)
-            if open_shifts:
-                logger.warning(
-                    "Refusing to backfill %s — %d open shift(s) currently in progress: %s. "
-                    "Close them (e.g. click Salida) or delete them before backfilling.",
-                    target_date, len(open_shifts), open_shifts,
-                )
-                return False
-            if stray:
-                logger.warning(
-                    "Refusing to backfill %s — %d existing shift(s) don't match "
-                    "the expected schedule: %s. Delete or edit them in the "
-                    "Factorial UI first, then retry.",
-                    target_date, len(stray), stray,
-                )
-                return False
 
             now = datetime.now(TZ)
             today_str = now.date().isoformat()
@@ -1374,7 +1404,7 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
 
         return all_ok
 
-    def backfill_week(self, days_back: int = 7) -> dict[str, bool]:
+    def backfill_week(self, days_back: int = 7, clean: bool = False) -> dict[str, bool]:
         """Backfill all workdays in the past N days that have missing hours.
 
         Returns dict: {date_string: success_bool}
@@ -1408,7 +1438,7 @@ query GetEmployeeByAccess($accessIds: [ID!]!) {
                 results[date_str] = True  # already complete
             else:
                 logger.info("Backfilling %s (%.0f min worked)", date_str, self._calculate_worked_minutes(shifts))
-                results[date_str] = self.backfill_date(date_str, employee_id)
+                results[date_str] = self.backfill_date(date_str, employee_id, clean=clean)
 
             current += timedelta(days=1)
 

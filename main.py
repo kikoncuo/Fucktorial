@@ -143,6 +143,10 @@ def main() -> None:
         "--yes", action="store_true",
         help="Skip confirmation prompts for destructive actions",
     )
+    parser.add_argument(
+        "--clean", action="store_true",
+        help="With --backfill/--backfill-today: delete open or non-matching shifts first",
+    )
     mode.add_argument(
         "--refresh", action="store_true",
         help="Refresh cookies from your real Chrome (no browser launch), then exit",
@@ -222,8 +226,8 @@ def main() -> None:
 
         # ── Dispatch ─────────────────────────────────────────────
         if args.backfill is not None:
-            logger.info("Backfilling past %d days...", args.backfill)
-            results = api.backfill_week(days_back=args.backfill)
+            logger.info("Backfilling past %d days (clean=%s)...", args.backfill, args.clean)
+            results = api.backfill_week(days_back=args.backfill, clean=args.clean)
             for d, ok in sorted(results.items()):
                 status = "OK" if ok else "FAILED"
                 logger.info("  %s: %s", d, status)
@@ -242,16 +246,17 @@ def main() -> None:
         elif args.backfill_today:
             from datetime import date as _date
             today = _date.today().isoformat()
-            logger.info("Backfilling today's missed slots (until_now=True)...")
+            logger.info("Backfilling today's missed slots (until_now=True, clean=%s)...", args.clean)
             slots = api.get_today_slot_status()
             for s in slots:
                 logger.info("  %-18s %s-%s  %s",
                             s["label"], s["clock_in"], s["clock_out"], s["status"])
             missed = [s for s in slots if s["status"] == "missed"]
-            if not missed:
+            active = [s for s in slots if s["status"] == "active"]
+            if not missed and not active and not args.clean:
                 logger.info("Nothing to backfill — no missed slots yet")
             else:
-                ok = api.backfill_date(today, until_now=True)
+                ok = api.backfill_date(today, until_now=True, clean=args.clean)
                 logger.info("Backfill today: %s", "OK" if ok else "FAILED")
         elif args.force:
             run_force_mode(api, args.force)
